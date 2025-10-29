@@ -6,14 +6,15 @@
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"npm run watch:main\" \"npm run watch:renderer\" \"wait-on dist/main/main.js && electron .\"",
-    "build": "npm run build:main && npm run build:renderer",
+    "build": "npm run copy-proto && npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "webpack --mode production",
     "watch:main": "tsc -w -p tsconfig.main.json",
     "watch:renderer": "webpack --watch --mode development",
-    "package:mac": "electron-builder --mac",
-    "package:win": "electron-builder --win",
-    "package:linux": "electron-builder --linux"
+    "copy-proto": "node scripts/copy-proto.js",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win",
+    "package:linux": "npm run build && electron-builder --linux"
   },
   "keywords": [
     "electron",
@@ -26,6 +27,7 @@
     "@types/node": "^20.19.23",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
+    "@types/react-router-dom": "^5.3.3",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
     "css-loader": "^6.8.1",
@@ -48,6 +50,7 @@
     "google-protobuf": "^3.21.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.9.4",
     "zustand": "^4.4.7"
   },
   "build": {

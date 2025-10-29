@@ -1,5 +1,6 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const webpack = require('webpack');
 
 module.exports = {
     target: 'electron-renderer',
@@ -13,6 +14,11 @@ module.exports = {
         alias: {
             '@': path.resolve(__dirname, 'src/renderer'),
         },
+        fallback: {
+            "path": false,
+            "fs": false,
+            "crypto": false,
+        }
     },
     module: {
         rules: [
@@ -44,6 +50,10 @@ module.exports = {
     plugins: [
         new HtmlWebpackPlugin({
             template: './public/index.html',
+        }),
+        new webpack.DefinePlugin({
+            'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+            'process.env.CONCORD_SERVER': JSON.stringify(process.env.CONCORD_SERVER || 'localhost:9090'),
         }),
     ],
     devtool: 'source-map',

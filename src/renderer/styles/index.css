@@ -14,6 +14,7 @@ body {
     sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
 }
 
 #root {
@@ -24,6 +25,7 @@ body {
 
 ::-webkit-scrollbar {
     width: 8px;
+    height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -37,4 +39,27 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #64748b;
+}
+
+@media (max-width: 640px) {
+    ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+}
+
+.compact-mode .message-item {
+    padding: 0.25rem 0;
+}
+
+.compact-mode .message-avatar {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.75rem;
+}
+
+@layer utilities {
+    .text-balance {
+        text-wrap: balance;
+    }
 }
