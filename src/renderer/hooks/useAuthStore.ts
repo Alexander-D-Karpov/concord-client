@@ -18,6 +18,8 @@ interface AuthState {
     tokens: AuthTokens | null;
     user: User | null;
     isAuthenticated: boolean;
+    isRefreshing: boolean;
+    isInitializing: boolean;
     refreshTimeout: NodeJS.Timeout | null;
     setTokens: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<void>;
     setUser: (user: User) => void;
@@ -28,29 +30,57 @@ interface AuthState {
     refreshToken: () => Promise<void>;
 }
 
+let initializationPromise: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>()(
     persist(
         (set, get) => ({
             tokens: null,
             user: null,
             isAuthenticated: false,
+            isRefreshing: false,
+            isInitializing: false,
             refreshTimeout: null,
 
             setTokens: async (accessToken: string, refreshToken: string, expiresIn: number) => {
-                const expiresAt = Date.now() + expiresIn * 1000;
-                set({
-                    tokens: { accessToken, refreshToken, expiresAt },
-                    isAuthenticated: true,
-                });
+                const state = get();
 
-                try {
-                    await window.concord.initializeClient(accessToken);
-                    console.log('[AuthStore] Client initialized with new token');
-                } catch (err) {
-                    console.error('[AuthStore] Failed to initialize client:', err);
+                if (state.isRefreshing || state.isInitializing) {
+                    console.log('[AuthStore] Token operation already in progress, skipping...');
+                    return;
                 }
 
-                get().startTokenRefresh();
+                if (initializationPromise) {
+                    console.log('[AuthStore] Waiting for existing initialization...');
+                    await initializationPromise;
+                    return;
+                }
+
+                const expiresAt = Date.now() + expiresIn * 1000;
+
+                set({ isInitializing: true });
+
+                initializationPromise = (async () => {
+                    try {
+                        set({
+                            tokens: { accessToken, refreshToken, expiresAt },
+                            isAuthenticated: true,
+                        });
+
+                        await window.concord.initializeClient(accessToken);
+                        console.log('[AuthStore] Client initialized successfully');
+
+                        get().startTokenRefresh();
+                    } catch (err) {
+                        console.error('[AuthStore] Failed to initialize client:', err);
+                        throw err;
+                    } finally {
+                        set({ isInitializing: false });
+                        initializationPromise = null;
+                    }
+                })();
+
+                await initializationPromise;
             },
 
             setUser: (user: User) => {
@@ -62,7 +92,9 @@ export const useAuthStore = create<AuthState>()(
                 set({
                     tokens: null,
                     user: null,
-                    isAuthenticated: false
+                    isAuthenticated: false,
+                    isRefreshing: false,
+                    isInitializing: false,
                 });
             },
 
@@ -71,7 +103,9 @@ export const useAuthStore = create<AuthState>()(
                 set({
                     tokens: null,
                     user: null,
-                    isAuthenticated: false
+                    isAuthenticated: false,
+                    isRefreshing: false,
+                    isInitializing: false,
                 });
             },
 
@@ -86,7 +120,7 @@ export const useAuthStore = create<AuthState>()(
                 const timeUntilExpiry = tokens.expiresAt - Date.now();
                 const refreshTime = Math.max(timeUntilExpiry - 60000, 10000);
 
-                console.log(`[AuthStore] Token refresh scheduled in ${refreshTime / 1000}s`);
+                console.log(`[AuthStore] Token refresh scheduled in ${Math.round(refreshTime / 1000)}s`);
 
                 const timeout = setTimeout(async () => {
                     try {
@@ -109,28 +143,44 @@ export const useAuthStore = create<AuthState>()(
             },
 
             refreshToken: async () => {
-                const { tokens } = get();
+                const state = get();
+                const { tokens, isRefreshing } = state;
+
+                if (isRefreshing) {
+                    console.log('[AuthStore] Token refresh already in progress');
+                    return;
+                }
 
                 if (!tokens?.refreshToken) {
                     throw new Error('No refresh token available');
                 }
 
                 console.log('[AuthStore] Refreshing token...');
+                set({ isRefreshing: true });
 
                 try {
                     const response = await window.concord.refreshToken(tokens.refreshToken);
 
-                    await get().setTokens(
-                        response.access_token,
-                        response.refresh_token,
-                        response.expires_in
-                    );
+                    const expiresAt = Date.now() + response.expires_in * 1000;
 
-                    console.log('[AuthStore] Token refreshed and client re-initialized successfully');
+                    set({
+                        tokens: {
+                            accessToken: response.access_token,
+                            refreshToken: response.refresh_token,
+                            expiresAt
+                        },
+                    });
+
+                    await window.concord.initializeClient(response.access_token);
+                    console.log('[AuthStore] Token refreshed successfully');
+
+                    get().startTokenRefresh();
                 } catch (err) {
                     console.error('[AuthStore] Failed to refresh token:', err);
                     get().logout();
                     throw err;
+                } finally {
+                    set({ isRefreshing: false });
                 }
             },
         }),
@@ -141,12 +191,15 @@ export const useAuthStore = create<AuthState>()(
                 user: state.user,
                 isAuthenticated: state.isAuthenticated,
             }),
-            onRehydrateStorage: () => (state) => {
-                if (state?.tokens?.accessToken) {
+            onRehydrateStorage: () => async (state) => {
+                if (state?.tokens?.accessToken && !state.isInitializing) {
                     console.log('[AuthStore] Rehydrating auth state');
-                    window.concord.initializeClient(state.tokens.accessToken).catch((err) => {
+                    try {
+                        await window.concord.initializeClient(state.tokens.accessToken);
+                        console.log('[AuthStore] Client initialized on rehydration');
+                    } catch (err) {
                         console.error('[AuthStore] Failed to initialize client on rehydration:', err);
-                    });
+                    }
                 }
             },
         }

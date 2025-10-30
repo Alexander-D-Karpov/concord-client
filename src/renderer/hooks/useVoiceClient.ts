@@ -37,6 +37,7 @@ export const useVoiceClient = (roomId?: string) => {
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const micStreamRef = useRef<MediaStream | null>(null);
+    const animationFrameRef = useRef<number | null>(null);
 
     const startAudioMonitoring = useCallback(async () => {
         try {
@@ -46,6 +47,7 @@ export const useVoiceClient = (roomId?: string) => {
             const audioContext = new AudioContext();
             const analyser = audioContext.createAnalyser();
             analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.8;
 
             const source = audioContext.createMediaStreamSource(stream);
             source.connect(analyser);
@@ -54,44 +56,48 @@ export const useVoiceClient = (roomId?: string) => {
             analyserRef.current = analyser;
 
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            let speakingTimeout: NodeJS.Timeout;
+            let lastSpeakingState = false;
 
             const checkVolume = () => {
-                if (!analyserRef.current || stateRef.current.muted || stateRef.current.deafened) {
+                if (!analyserRef.current) return;
+
+                const currentState = stateRef.current;
+
+                if (currentState.muted || currentState.deafened) {
+                    if (lastSpeakingState) {
+                        setState(prev => ({ ...prev, speaking: false }));
+                        lastSpeakingState = false;
+                    }
+                    animationFrameRef.current = requestAnimationFrame(checkVolume);
                     return;
                 }
 
                 analyser.getByteFrequencyData(dataArray);
                 const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
 
-                const threshold = 30;
+                const threshold = 25;
                 const isSpeaking = average > threshold;
 
-                if (isSpeaking !== stateRef.current.speaking) {
+                if (isSpeaking !== lastSpeakingState) {
                     setState(prev => ({ ...prev, speaking: isSpeaking }));
-
-                    if (isSpeaking) {
-                        clearTimeout(speakingTimeout);
-                    } else {
-                        speakingTimeout = setTimeout(() => {
-                            setState(prev => ({ ...prev, speaking: false }));
-                        }, 300);
-                    }
+                    lastSpeakingState = isSpeaking;
                 }
+
+                animationFrameRef.current = requestAnimationFrame(checkVolume);
             };
 
-            const intervalId = setInterval(checkVolume, 100);
-
-            return () => {
-                clearInterval(intervalId);
-                clearTimeout(speakingTimeout);
-            };
+            checkVolume();
         } catch (err) {
             console.error('Failed to start audio monitoring:', err);
         }
     }, []);
 
     const stopAudioMonitoring = useCallback(() => {
+        if (animationFrameRef.current !== null) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+        }
+
         if (micStreamRef.current) {
             micStreamRef.current.getTracks().forEach(track => track.stop());
             micStreamRef.current = null;
@@ -176,7 +182,7 @@ export const useVoiceClient = (roomId?: string) => {
                 participants,
             }));
 
-            startAudioMonitoring();
+            await startAudioMonitoring();
         } catch (err: any) {
             setState(prev => ({
                 ...prev,
@@ -211,7 +217,7 @@ export const useVoiceClient = (roomId?: string) => {
     const setMuted = useCallback(async (muted: boolean) => {
         try {
             await window.concord.setMuted?.(muted);
-            setState(prev => ({ ...prev, muted, speaking: false }));
+            setState(prev => ({ ...prev, muted, speaking: muted ? false : prev.speaking }));
         } catch (err: any) {
             console.error('Failed to set muted:', err);
         }

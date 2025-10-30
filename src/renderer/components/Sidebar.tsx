@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useAuthStore } from '../hooks/useAuthStore';
+import InviteMemberModal from './InviteMemberModal';
 
 const Sidebar: React.FC = () => {
     const { rooms, currentRoomId, setCurrentRoom } = useRoomsStore();
@@ -10,7 +11,11 @@ const Sidebar: React.FC = () => {
 
     const [showCreateRoom, setShowCreateRoom] = useState(false);
     const [newRoomName, setNewRoomName] = useState('');
+    const [newRoomDescription, setNewRoomDescription] = useState('');
+    const [isPrivate, setIsPrivate] = useState(false);
     const [creating, setCreating] = useState(false);
+    const [showInviteAfterCreate, setShowInviteAfterCreate] = useState(false);
+    const [createdRoomId, setCreatedRoomId] = useState<string | null>(null);
 
     const handleCreateRoom = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -18,13 +23,24 @@ const Sidebar: React.FC = () => {
 
         setCreating(true);
         try {
-            await window.concord.createRoom(newRoomName.trim());
+            const room = await window.concord.createRoom(
+                newRoomName.trim(),
+                undefined,
+                newRoomDescription.trim() || undefined,
+                isPrivate
+            );
+
             setNewRoomName('');
+            setNewRoomDescription('');
+            setIsPrivate(false);
             setShowCreateRoom(false);
 
             const res = await window.concord.getRooms();
             const { setRooms } = useRoomsStore.getState();
             setRooms(res?.rooms || []);
+
+            setCreatedRoomId(room.id);
+            setShowInviteAfterCreate(true);
         } catch (err) {
             console.error('Failed to create room:', err);
         } finally {
@@ -32,9 +48,18 @@ const Sidebar: React.FC = () => {
         }
     };
 
+    const handleInviteAfterCreate = async (userId: string) => {
+        if (!createdRoomId) return;
+        try {
+            await window.concord.inviteMember(createdRoomId, userId);
+        } catch (err) {
+            console.error('Failed to invite member:', err);
+            throw err;
+        }
+    };
+
     return (
         <div className="w-64 bg-dark-800 flex flex-col border-r border-dark-700 overflow-hidden h-screen">
-            {/* User profile */}
             <div className="p-4 border-b border-dark-700 flex-shrink-0">
                 <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold flex-shrink-0">
@@ -61,7 +86,6 @@ const Sidebar: React.FC = () => {
                 </div>
             </div>
 
-            {/* Rooms header */}
             <div className="p-4 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-white font-semibold text-sm">Rooms</h2>
                 <button
@@ -75,27 +99,54 @@ const Sidebar: React.FC = () => {
                 </button>
             </div>
 
-            {/* Create room modal */}
             {showCreateRoom && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-dark-800 p-6 rounded-lg w-full max-w-md border border-dark-700">
                         <h3 className="text-white text-lg font-semibold mb-4">Create Room</h3>
                         <form onSubmit={handleCreateRoom}>
-                            <input
-                                type="text"
-                                value={newRoomName}
-                                onChange={(e) => setNewRoomName(e.target.value)}
-                                className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 mb-4"
-                                placeholder="Room name"
-                                autoFocus
-                                maxLength={50}
-                            />
-                            <div className="flex space-x-2">
+                            <div className="space-y-4">
+                                <input
+                                    type="text"
+                                    value={newRoomName}
+                                    onChange={(e) => setNewRoomName(e.target.value)}
+                                    className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                    placeholder="Room name"
+                                    autoFocus
+                                    maxLength={50}
+                                />
+                                <textarea
+                                    value={newRoomDescription}
+                                    onChange={(e) => setNewRoomDescription(e.target.value)}
+                                    className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                    placeholder="Description (optional)"
+                                    rows={3}
+                                    maxLength={200}
+                                />
+                                <div className="flex items-center justify-between">
+                                    <span className="text-white text-sm">Private Room</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsPrivate(!isPrivate)}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                            isPrivate ? 'bg-primary-600' : 'bg-dark-600'
+                                        }`}
+                                    >
+                                        <span
+                                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                isPrivate ? 'translate-x-6' : 'translate-x-1'
+                                            }`}
+                                        />
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex space-x-2 mt-4">
                                 <button
                                     type="button"
                                     onClick={() => {
                                         setShowCreateRoom(false);
                                         setNewRoomName('');
+                                        setNewRoomDescription('');
+                                        setIsPrivate(false);
                                     }}
                                     className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition"
                                     disabled={creating}
@@ -115,7 +166,17 @@ const Sidebar: React.FC = () => {
                 </div>
             )}
 
-            {/* Rooms list */}
+            {showInviteAfterCreate && createdRoomId && (
+                <InviteMemberModal
+                    roomId={createdRoomId}
+                    onClose={() => {
+                        setShowInviteAfterCreate(false);
+                        setCreatedRoomId(null);
+                    }}
+                    onInvite={handleInviteAfterCreate}
+                />
+            )}
+
             <div className="flex-1 overflow-y-auto">
                 {rooms.length === 0 ? (
                     <div className="p-4 text-center text-dark-400 text-sm">

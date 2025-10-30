@@ -23,11 +23,14 @@ const DeviceSelector: React.FC<DeviceSelectorProps> = ({ onClose }) => {
     const [testingAudio, setTestingAudio] = useState(false);
     const [audioLevel, setAudioLevel] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [videoPreviewEnabled, setVideoPreviewEnabled] = useState(false);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const animationFrameRef = useRef<number>();
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const videoStreamRef = useRef<MediaStream | null>(null);
 
     useEffect(() => {
         const init = async () => {
@@ -58,6 +61,7 @@ const DeviceSelector: React.FC<DeviceSelectorProps> = ({ onClose }) => {
                 const audioContext = new AudioContext();
                 const analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.8;
 
                 const source = audioContext.createMediaStreamSource(stream);
                 source.connect(analyser);
@@ -98,6 +102,43 @@ const DeviceSelector: React.FC<DeviceSelectorProps> = ({ onClose }) => {
             }
         };
     }, [selectedAudioInput, loading]);
+
+    useEffect(() => {
+        if (!videoPreviewEnabled || !selectedVideo) {
+            if (videoStreamRef.current) {
+                videoStreamRef.current.getTracks().forEach(track => track.stop());
+                videoStreamRef.current = null;
+            }
+            if (videoRef.current) {
+                videoRef.current.srcObject = null;
+            }
+            return;
+        }
+
+        const startVideoPreview = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: selectedVideo, width: 640, height: 480 },
+                });
+                videoStreamRef.current = stream;
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                }
+            } catch (err) {
+                console.error('Failed to start video preview:', err);
+                setError('Failed to access camera');
+            }
+        };
+
+        startVideoPreview();
+
+        return () => {
+            if (videoStreamRef.current) {
+                videoStreamRef.current.getTracks().forEach(track => track.stop());
+                videoStreamRef.current = null;
+            }
+        };
+    }, [videoPreviewEnabled, selectedVideo]);
 
     const testAudioOutput = async () => {
         setTestingAudio(true);
@@ -185,7 +226,7 @@ const DeviceSelector: React.FC<DeviceSelectorProps> = ({ onClose }) => {
                                 <div className="mt-2 flex items-center space-x-2">
                                     <div className="flex-1 h-2 bg-dark-700 rounded-full overflow-hidden">
                                         <div
-                                            className="h-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-100"
+                                            className="h-full bg-gradient-to-r from-green-500 to-green-400"
                                             style={{ width: `${audioLevel}%` }}
                                         ></div>
                                     </div>
@@ -236,17 +277,36 @@ const DeviceSelector: React.FC<DeviceSelectorProps> = ({ onClose }) => {
                                         No cameras detected
                                     </div>
                                 ) : (
-                                    <select
-                                        value={selectedVideo || ''}
-                                        onChange={(e) => setSelectedVideo(e.target.value)}
-                                        className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                                    >
-                                        {videoDevices.map((device) => (
-                                            <option key={device.deviceId} value={device.deviceId}>
-                                                {device.label || `Camera ${device.deviceId.substring(0, 8)}`}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <>
+                                        <select
+                                            value={selectedVideo || ''}
+                                            onChange={(e) => setSelectedVideo(e.target.value)}
+                                            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                        >
+                                            {videoDevices.map((device) => (
+                                                <option key={device.deviceId} value={device.deviceId}>
+                                                    {device.label || `Camera ${device.deviceId.substring(0, 8)}`}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            onClick={() => setVideoPreviewEnabled(!videoPreviewEnabled)}
+                                            className="mt-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-lg transition"
+                                        >
+                                            {videoPreviewEnabled ? 'Stop Preview' : 'Test Camera'}
+                                        </button>
+                                        {videoPreviewEnabled && (
+                                            <div className="mt-3 bg-dark-900 rounded-lg overflow-hidden">
+                                                <video
+                                                    ref={videoRef}
+                                                    autoPlay
+                                                    playsInline
+                                                    muted
+                                                    className="w-full aspect-video object-cover"
+                                                />
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         </>

@@ -6,8 +6,13 @@ import { useAuthStore } from '../hooks/useAuthStore';
 const Settings: React.FC = () => {
     const navigate = useNavigate();
     const { settings, updateSettings, resetSettings } = useSettingsStore();
-    const { logout } = useAuthStore();
+    const { user, logout } = useAuthStore();
     const [showResetConfirm, setShowResetConfirm] = useState(false);
+    const [profileForm, setProfileForm] = useState({
+        displayName: user?.displayName || '',
+        bio: '',
+    });
+    const [saving, setSaving] = useState(false);
 
     const handleLogout = () => {
         logout();
@@ -19,9 +24,24 @@ const Settings: React.FC = () => {
         setShowResetConfirm(false);
     };
 
+    const handleSaveProfile = async () => {
+        setSaving(true);
+        try {
+            await window.concord.updateProfile(
+                profileForm.displayName,
+                undefined,
+                profileForm.bio
+            );
+        } catch (err) {
+            console.error('Failed to save profile:', err);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     return (
-        <div className="flex-1 bg-dark-900 overflow-y-auto">
-            <div className="max-w-4xl mx-auto p-8">
+        <div className="flex-1 bg-dark-900 h-screen overflow-y-auto">
+            <div className="max-w-4xl mx-auto p-4 sm:p-8">
                 <div className="mb-8">
                     <button
                         onClick={() => navigate('/')}
@@ -32,12 +52,49 @@ const Settings: React.FC = () => {
                         </svg>
                         Back to Home
                     </button>
-                    <h1 className="text-3xl font-bold text-white">Settings</h1>
+                    <h1 className="text-2xl sm:text-3xl font-bold text-white">Settings</h1>
                     <p className="text-dark-400 mt-2">Customize your Concord experience</p>
                 </div>
 
                 <div className="space-y-6">
-                    <div className="bg-dark-800 rounded-lg p-6 border border-dark-700">
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
+                        <h2 className="text-xl font-semibold text-white mb-4">Profile</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-dark-300 mb-2">
+                                    Display Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={profileForm.displayName}
+                                    onChange={(e) => setProfileForm(prev => ({ ...prev, displayName: e.target.value }))}
+                                    className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                    placeholder="Your display name"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-dark-300 mb-2">
+                                    Bio
+                                </label>
+                                <textarea
+                                    value={profileForm.bio}
+                                    onChange={(e) => setProfileForm(prev => ({ ...prev, bio: e.target.value }))}
+                                    rows={3}
+                                    className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                    placeholder="Tell us about yourself..."
+                                />
+                            </div>
+                            <button
+                                onClick={handleSaveProfile}
+                                disabled={saving}
+                                className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-dark-600 text-white rounded-lg transition"
+                            >
+                                {saving ? 'Saving...' : 'Save Profile'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Connection</h2>
                         <div className="space-y-4">
                             <div>
@@ -58,7 +115,7 @@ const Settings: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-dark-800 rounded-lg p-6 border border-dark-700">
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Appearance</h2>
                         <div className="space-y-4">
                             <div>
@@ -131,7 +188,7 @@ const Settings: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-dark-800 rounded-lg p-6 border border-dark-700">
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Notifications</h2>
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
@@ -174,7 +231,7 @@ const Settings: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-dark-800 rounded-lg p-6 border border-dark-700">
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Account</h2>
                         <div className="space-y-4">
                             <button
@@ -186,7 +243,7 @@ const Settings: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-dark-800 rounded-lg p-6 border border-dark-700">
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Danger Zone</h2>
                         <div className="space-y-4">
                             <button

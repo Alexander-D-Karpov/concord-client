@@ -1,9 +1,13 @@
+export type UserStatus = 'online' | 'offline' | 'away' | 'busy';
+
 export interface User {
     id: string;
     handle: string;
     displayName: string;
     avatarUrl?: string;
     createdAt: string;
+    status?: UserStatus;
+    bio?: string;
 }
 
 export interface Room {
@@ -13,6 +17,8 @@ export interface Room {
     voiceServerId?: string;
     region?: string;
     createdAt: string;
+    description?: string;
+    isPrivate?: boolean;
 }
 
 export interface Member {
@@ -20,6 +26,26 @@ export interface Member {
     roomId: string;
     role: 'member' | 'moderator' | 'admin';
     joinedAt: string;
+    nickname?: string;
+}
+
+export interface MessageAttachment {
+    id: string;
+    url: string;
+    filename: string;
+    contentType: string;
+    size: number;
+    width?: number;
+    height?: number;
+    createdAt: string;
+}
+
+export interface MessageReaction {
+    id: string;
+    messageId: string;
+    userId: string;
+    emoji: string;
+    createdAt: string;
 }
 
 export interface Message {
@@ -30,6 +56,12 @@ export interface Message {
     createdAt: string;
     editedAt?: string;
     deleted?: boolean;
+    replyToId?: string;
+    replyCount?: number;
+    attachments?: MessageAttachment[];
+    mentions?: string[];
+    reactions?: MessageReaction[];
+    pinned?: boolean;
 }
 
 export interface VoiceState {

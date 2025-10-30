@@ -10,6 +10,7 @@ let client: ConcordClient | null = null;
 let voiceClient: VoiceClient | null = null;
 let audioManager: AudioManager | null = null;
 let videoManager: VideoManager | null = null;
+let currentStream: any = null;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -123,6 +124,42 @@ function setupIPC() {
         }
     });
 
+    ipcMain.handle('users:getUser', async (_e, { userId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.getUser(userId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to get user');
+        }
+    });
+
+    ipcMain.handle('users:search', async (_e, { query, limit }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.searchUsers(query, limit);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to search users');
+        }
+    });
+
+    ipcMain.handle('users:updateProfile', async (_e, { displayName, avatarUrl, bio }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.updateProfile(displayName, avatarUrl, bio);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to update profile');
+        }
+    });
+
+    ipcMain.handle('users:updateStatus', async (_e, { status }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.updateStatus(status);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to update status');
+        }
+    });
+
     ipcMain.handle('rooms:list', async () => {
         try {
             if (!client) throw new Error('Client not initialized');
@@ -132,12 +169,30 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('rooms:create', async (_e, { name, region }) => {
+    ipcMain.handle('rooms:create', async (_e, { name, region, description, isPrivate }) => {
         try {
             if (!client) throw new Error('Client not initialized');
-            return await client.createRoom(name, region);
+            return await client.createRoom(name, region, description, isPrivate);
         } catch (error: any) {
             throw new Error(error?.message || 'Failed to create room');
+        }
+    });
+
+    ipcMain.handle('rooms:update', async (_e, { roomId, name, description, isPrivate }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.updateRoom(roomId, name, description, isPrivate);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to update room');
+        }
+    });
+
+    ipcMain.handle('rooms:delete', async (_e, { roomId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.deleteRoom(roomId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to delete room');
         }
     });
 
@@ -150,6 +205,42 @@ function setupIPC() {
         }
     });
 
+    ipcMain.handle('membership:invite', async (_e, { roomId, userId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.inviteMember(roomId, userId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to invite member');
+        }
+    });
+
+    ipcMain.handle('membership:remove', async (_e, { roomId, userId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.removeMember(roomId, userId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to remove member');
+        }
+    });
+
+    ipcMain.handle('membership:setRole', async (_e, { roomId, userId, role }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.setMemberRole(roomId, userId, role);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to set role');
+        }
+    });
+
+    ipcMain.handle('membership:setNickname', async (_e, { roomId, nickname }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.setMemberNickname(roomId, nickname);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to set nickname');
+        }
+    });
+
     ipcMain.handle('chat:list', async (_e, { roomId, limit, beforeId }) => {
         try {
             if (!client) throw new Error('Client not initialized');
@@ -159,58 +250,144 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('chat:send', async (_e, { roomId, content }) => {
+    ipcMain.handle('chat:send', async (_e, { roomId, content, replyToId, mentions }) => {
         try {
             if (!client) throw new Error('Client not initialized');
-            return await client.sendMessage(roomId, content);
+            return await client.sendMessage(roomId, content, replyToId, mentions);
         } catch (error: any) {
             throw new Error(error?.message || 'Failed to send message');
+        }
+    });
+
+    ipcMain.handle('chat:edit', async (_e, { messageId, content }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.editMessage(messageId, content);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to edit message');
+        }
+    });
+
+    ipcMain.handle('chat:delete', async (_e, { messageId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.deleteMessage(messageId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to delete message');
+        }
+    });
+
+    ipcMain.handle('chat:pin', async (_e, { roomId, messageId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.pinMessage(roomId, messageId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to pin message');
+        }
+    });
+
+    ipcMain.handle('chat:unpin', async (_e, { roomId, messageId }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.unpinMessage(roomId, messageId);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to unpin message');
+        }
+    });
+
+    ipcMain.handle('chat:addReaction', async (_e, { messageId, emoji }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.addReaction(messageId, emoji);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to add reaction');
+        }
+    });
+
+    ipcMain.handle('chat:removeReaction', async (_e, { messageId, emoji }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.removeReaction(messageId, emoji);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to remove reaction');
+        }
+    });
+
+    ipcMain.handle('chat:search', async (_e, { roomId, query, limit }) => {
+        try {
+            if (!client) throw new Error('Client not initialized');
+            return await client.searchMessages(roomId, query, limit);
+        } catch (error: any) {
+            throw new Error(error?.message || 'Failed to search messages');
         }
     });
 
     ipcMain.handle('stream:start', async () => {
         try {
             if (!client) throw new Error('Client not initialized');
-            const stream = await client.startEventStream();
+
+            if (currentStream) {
+                try {
+                    currentStream.end();
+                } catch (err) {
+                    console.error('[Main] Error ending existing stream:', err);
+                }
+                currentStream = null;
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            console.log('[Main] Starting new bidirectional stream...');
+            const stream = client.startEventStream();
+            currentStream = stream;
 
             stream.on('data', (event: any) => {
-                mainWindow?.webContents.send('stream:event', event);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('stream:event', event);
+                }
             });
 
             stream.on('error', (error: Error) => {
-                console.error('Stream error:', error);
-                mainWindow?.webContents.send('stream:error', error.message);
+                console.error('[Main] Stream error:', error);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('stream:error', error.message);
+                }
+                currentStream = null;
             });
 
             stream.on('end', () => {
-                console.log('Stream ended');
-                mainWindow?.webContents.send('stream:end');
+                console.log('[Main] Stream ended');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('stream:end');
+                }
+                currentStream = null;
             });
 
+            console.log('[Main] Bidirectional stream started successfully');
             return { success: true };
         } catch (error: any) {
-            console.error('Failed to start stream:', error);
+            console.error('[Main] Failed to start stream:', error);
+            currentStream = null;
             throw new Error(error?.message || 'Failed to start stream');
         }
     });
 
-    ipcMain.handle('stream:subscribe', async (_e, { roomIds }) => {
+    ipcMain.handle('stream:ack', async (_e, { eventId }) => {
         try {
-            if (!client) throw new Error('Client not initialized');
-            await client.subscribeToRooms(roomIds);
-            return { success: true };
-        } catch (error: any) {
-            throw new Error(error?.message || 'Failed to subscribe');
-        }
-    });
+            if (!currentStream) {
+                console.warn('[Main] No active stream for acknowledgment');
+                return { success: false };
+            }
 
-    ipcMain.handle('stream:unsubscribe', async (_e, { roomIds }) => {
-        try {
-            if (!client) throw new Error('Client not initialized');
-            await client.unsubscribeFromRooms(roomIds);
+            currentStream.write({
+                payload: {
+                    ack: { event_id: eventId }
+                }
+            });
+
             return { success: true };
         } catch (error: any) {
-            throw new Error(error?.message || 'Failed to unsubscribe');
+            console.error('[Main] Failed to send acknowledgment:', error);
+            throw new Error(error?.message || 'Failed to acknowledge event');
         }
     });
 
@@ -279,7 +456,10 @@ function setupVoiceIPC() {
             await voiceClient.connect();
             console.log('[Main] Voice client connected!');
 
-            return { success: true };
+            return {
+                success: true,
+                participantCount: response.participants?.length || 0
+            };
         } catch (error: any) {
             console.error('[Main] Failed to join voice:', error);
             throw new Error(error?.message || 'Failed to join voice');
@@ -321,16 +501,23 @@ function setupVoiceIPC() {
 
     ipcMain.handle('voice:setVideoEnabled', async (_e, { enabled }) => {
         try {
-            if (enabled && !videoManager) {
-                videoManager = new VideoManager();
-                await videoManager.initialize({
-                    width: 640,
-                    height: 480,
-                    frameRate: 30,
-                });
+            if (enabled) {
+                if (!videoManager) {
+                    videoManager = new VideoManager();
+                    await videoManager.initialize({
+                        width: 640,
+                        height: 480,
+                        frameRate: 30,
+                    });
+                }
+                videoManager.setEnabled(true);
+            } else {
+                if (videoManager) {
+                    videoManager.setEnabled(false);
+                    videoManager.destroy();
+                    videoManager = null;
+                }
             }
-
-            videoManager?.setEnabled(enabled);
             return { success: true };
         } catch (error: any) {
             throw new Error(error?.message || 'Failed to set video state');
@@ -357,6 +544,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+    if (currentStream) {
+        currentStream.end();
+        currentStream = null;
+    }
     if (voiceClient) {
         voiceClient.disconnect();
     }
