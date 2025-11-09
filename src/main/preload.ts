@@ -3,8 +3,12 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('concord', {
     getDefaultServerAddress: () => ipcRenderer.invoke('app:getDefaultServerAddress'),
 
-    initializeClient: (accessToken: string, serverAddress?: string) =>
-        ipcRenderer.invoke('client:initialize', { accessToken, serverAddress }),
+    initializeClient: (
+        accessToken: string,
+        serverAddress?: string,
+        refreshToken?: string,
+        expiresIn?: number
+    ) => ipcRenderer.invoke('client:initialize', { accessToken, serverAddress, refreshToken, expiresIn }),
 
     register: (handle: string, password: string, displayName: string, serverAddress?: string) =>
         ipcRenderer.invoke('auth:register', { handle, password, displayName, serverAddress }),
@@ -60,8 +64,14 @@ contextBridge.exposeInMainWorld('concord', {
     getMessages: (roomId: string, limit?: number, beforeId?: string) =>
         ipcRenderer.invoke('chat:list', { roomId, limit, beforeId }),
 
-    sendMessage: (roomId: string, content: string, replyToId?: string, mentions?: string[]) =>
-        ipcRenderer.invoke('chat:send', { roomId, content, replyToId, mentions }),
+    sendMessage: (roomId: string, content: string, replyToId?: string, mentions?: string[], attachments?: Array<{
+        filename: string;
+        content_type: string;
+        data: number[];
+        width?: number;
+        height?: number;
+    }>) =>
+        ipcRenderer.invoke('chat:send', { roomId, content, replyToId, mentions, attachments }),
 
     editMessage: (messageId: string, content: string) =>
         ipcRenderer.invoke('chat:edit', { messageId, content }),
@@ -119,5 +129,89 @@ contextBridge.exposeInMainWorld('concord', {
 
     onVoiceVideoFrame: (callback: (data: any) => void) => {
         ipcRenderer.on('voice:video-frame', (_event, data) => callback(data));
+    },
+
+    onStreamEvent(cb: (event: any) => void) {
+        const h = (_e: any, ev: any) => {
+            console.log('[Preload] RAW IPC EVENT from main:', JSON.stringify(ev, null, 2));
+            cb(ev);
+        };
+        ipcRenderer.on('stream:event', h);
+        return () => ipcRenderer.removeListener('stream:event', h);
+    },
+    onStreamError(cb: (err: string) => void) {
+        const h = (_e: any, err: string) => {
+            console.log('[Preload] IPC ERROR from main:', err);
+            cb(err);
+        };
+        ipcRenderer.on('stream:error', h);
+        return () => ipcRenderer.removeListener('stream:error', h);
+    },
+    onStreamEnd(cb: () => void) {
+        const h = () => {
+            console.log('[Preload] IPC STREAM END from main');
+            cb();
+        };
+        ipcRenderer.on('stream:end', h);
+        return () => ipcRenderer.removeListener('stream:end', h);
+    },
+
+    sendFriendRequest: (userId: string) =>
+        ipcRenderer.invoke('friends:sendRequest', { userId }),
+
+    acceptFriendRequest: (requestId: string) =>
+        ipcRenderer.invoke('friends:acceptRequest', { requestId }),
+
+    rejectFriendRequest: (requestId: string) =>
+        ipcRenderer.invoke('friends:rejectRequest', { requestId }),
+
+    cancelFriendRequest: (requestId: string) =>
+        ipcRenderer.invoke('friends:cancelRequest', { requestId }),
+
+    removeFriend: (userId: string) =>
+        ipcRenderer.invoke('friends:remove', { userId }),
+
+    listFriends: () =>
+        ipcRenderer.invoke('friends:list'),
+
+    listPendingRequests: () =>
+        ipcRenderer.invoke('friends:listPending'),
+
+    blockUser: (userId: string) =>
+        ipcRenderer.invoke('friends:block', { userId }),
+
+    unblockUser: (userId: string) =>
+        ipcRenderer.invoke('friends:unblock', { userId }),
+
+    listBlockedUsers: () =>
+        ipcRenderer.invoke('friends:listBlocked'),
+
+    getVoiceStatus: (roomId: string) =>
+        ipcRenderer.invoke('voice:getStatus', { roomId }),
+
+    logout: (refreshToken: string) =>
+        ipcRenderer.invoke('auth:logout', { refreshToken }),
+
+    getRoom: (roomId: string) =>
+        ipcRenderer.invoke('rooms:get', { roomId }),
+
+    getUserByHandle: (handle: string) =>
+        ipcRenderer.invoke('users:getByHandle', { handle }),
+
+    listUsersByIds: (userIds: string[]) =>
+        ipcRenderer.invoke('users:listByIds', { userIds }),
+
+    listPinnedMessages: (roomId: string) =>
+        ipcRenderer.invoke('chat:listPinned', { roomId }),
+
+    getThread: (messageId: string, limit?: number, cursor?: string) =>
+        ipcRenderer.invoke('chat:getThread', { messageId, limit, cursor }),
+
+    checkAuthStatus: () => ipcRenderer.invoke('auth:checkStatus'),
+
+    onAuthExpired: (callback: () => void) => {
+        const h = () => callback();
+        ipcRenderer.on('auth:expired', h);
+        return () => ipcRenderer.removeListener('auth:expired', h);
     },
 });

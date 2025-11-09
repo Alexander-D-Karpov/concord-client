@@ -158,7 +158,35 @@ export const useVoiceClient = (roomId?: string) => {
         setState(prev => ({ ...prev, connecting: true, error: null }));
 
         try {
-            const result = await window.concord.joinVoice(roomId, audioOnly);
+            let hasAudio = true;
+            let hasVideo = !audioOnly;
+
+            try {
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (err) {
+                console.warn('Microphone not available:', err);
+                hasAudio = false;
+            }
+
+            if (!audioOnly) {
+                try {
+                    await navigator.mediaDevices.getUserMedia({ video: true });
+                } catch (err) {
+                    console.warn('Camera not available:', err);
+                    hasVideo = false;
+                }
+            }
+
+            if (!hasAudio) {
+                setState(prev => ({
+                    ...prev,
+                    connecting: false,
+                    error: 'Microphone not available. You can still listen.',
+                    muted: true,
+                }));
+            }
+
+            const result = await window.concord.joinVoice(roomId, !hasVideo);
 
             const participants = new Map<number, ParticipantState>();
 
@@ -178,11 +206,14 @@ export const useVoiceClient = (roomId?: string) => {
                 ...prev,
                 connected: true,
                 connecting: false,
-                videoEnabled: !audioOnly,
+                videoEnabled: hasVideo,
+                muted: !hasAudio,
                 participants,
             }));
 
-            await startAudioMonitoring();
+            if (hasAudio) {
+                await startAudioMonitoring();
+            }
         } catch (err: any) {
             setState(prev => ({
                 ...prev,

@@ -44,12 +44,10 @@ export const useAuthStore = create<AuthState>()(
 
             setTokens: async (accessToken: string, refreshToken: string, expiresIn: number) => {
                 const state = get();
-
                 if (state.isRefreshing || state.isInitializing) {
                     console.log('[AuthStore] Token operation already in progress, skipping...');
                     return;
                 }
-
                 if (initializationPromise) {
                     console.log('[AuthStore] Waiting for existing initialization...');
                     await initializationPromise;
@@ -67,7 +65,8 @@ export const useAuthStore = create<AuthState>()(
                             isAuthenticated: true,
                         });
 
-                        await window.concord.initializeClient(accessToken);
+                        console.log('[AuthStore] Initializing client with tokens');
+                        await window.concord.initializeClient(accessToken, undefined, refreshToken, expiresIn);
                         console.log('[AuthStore] Client initialized successfully');
 
                         get().startTokenRefresh();
@@ -118,6 +117,16 @@ export const useAuthStore = create<AuthState>()(
                 state.stopTokenRefresh();
 
                 const timeUntilExpiry = tokens.expiresAt - Date.now();
+
+                if (timeUntilExpiry <= 60000) {
+                    console.log('[AuthStore] Token expired or about to expire, refreshing immediately');
+                    state.refreshToken().catch(err => {
+                        console.error('[AuthStore] Immediate token refresh failed:', err);
+                        state.logout();
+                    });
+                    return;
+                }
+
                 const refreshTime = Math.max(timeUntilExpiry - 60000, 10000);
 
                 console.log(`[AuthStore] Token refresh scheduled in ${Math.round(refreshTime / 1000)}s`);
@@ -171,7 +180,13 @@ export const useAuthStore = create<AuthState>()(
                         },
                     });
 
-                    await window.concord.initializeClient(response.access_token);
+                    console.log('[AuthStore] Reinitializing client with new tokens');
+                    await window.concord.initializeClient(
+                        response.access_token,
+                        undefined,
+                        response.refresh_token,
+                        response.expires_in
+                    );
                     console.log('[AuthStore] Token refreshed successfully');
 
                     get().startTokenRefresh();
@@ -195,8 +210,19 @@ export const useAuthStore = create<AuthState>()(
                 if (state?.tokens?.accessToken && !state.isInitializing) {
                     console.log('[AuthStore] Rehydrating auth state');
                     try {
-                        await window.concord.initializeClient(state.tokens.accessToken);
+                        const expiresIn = state.tokens.expiresAt
+                            ? Math.max(Math.floor((state.tokens.expiresAt - Date.now()) / 1000), 0)
+                            : undefined;
+
+                        await window.concord.initializeClient(
+                            state.tokens.accessToken,
+                            undefined,
+                            state.tokens.refreshToken,
+                            expiresIn
+                        );
                         console.log('[AuthStore] Client initialized on rehydration');
+
+                        state.startTokenRefresh?.();
                     } catch (err) {
                         console.error('[AuthStore] Failed to initialize client on rehydration:', err);
                     }

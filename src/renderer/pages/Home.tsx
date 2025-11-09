@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Chat from '../components/Chat';
 import MemberList from '../components/MemberList';
@@ -9,19 +9,26 @@ import { useEventStream } from '../hooks/useEventStream';
 
 const Home: React.FC = () => {
     const { setRooms } = useRoomsStore();
-    const { tokens, user, setUser, startTokenRefresh, isRefreshing, isInitializing } = useAuthStore();
+    const { tokens, user, setUser, isRefreshing, isInitializing } = useAuthStore();
     const { settings } = useSettingsStore();
-    const { connected, reconnecting } = useEventStream();
+
+    useEventStream();
+
     const [showSidebar, setShowSidebar] = useState(false);
     const [showMemberList, setShowMemberList] = useState(false);
     const [loading, setLoading] = useState(true);
+    const initializedRef = useRef(false);
 
     useEffect(() => {
         const loadUserAndRooms = async () => {
-            if (!tokens?.accessToken || isInitializing) {
-                setLoading(false);
+            if (!tokens?.accessToken || isInitializing || initializedRef.current) {
+                if (!tokens?.accessToken) {
+                    setLoading(false);
+                }
                 return;
             }
+
+            initializedRef.current = true;
 
             try {
                 setLoading(true);
@@ -46,19 +53,18 @@ const Home: React.FC = () => {
                     createdAt: new Date(Number(r.created_at?.seconds || 0) * 1000).toISOString(),
                 }));
                 setRooms(rooms);
-
-                startTokenRefresh();
             } catch (err) {
                 console.error('Failed to load data:', err);
+                initializedRef.current = false;
             } finally {
                 setLoading(false);
             }
         };
 
-        if (!isInitializing) {
+        if (!isInitializing && !isRefreshing) {
             loadUserAndRooms();
         }
-    }, [tokens?.accessToken, user, setRooms, setUser, settings.serverAddress, startTokenRefresh, isInitializing]);
+    }, [tokens?.accessToken, isInitializing, isRefreshing]);
 
     useEffect(() => {
         const handleKeyPress = (e: KeyboardEvent) => {
@@ -156,20 +162,6 @@ const Home: React.FC = () => {
                         <MemberList />
                     </div>
                 </>
-            )}
-
-            {reconnecting && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-yellow-500 bg-opacity-10 border border-yellow-500 text-yellow-500 px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center space-x-2 z-20">
-                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-                    <span>Reconnecting...</span>
-                </div>
-            )}
-
-            {!connected && !reconnecting && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-500 bg-opacity-10 border border-red-500 text-red-500 px-3 py-2 rounded-lg text-xs sm:text-sm flex items-center space-x-2 z-20">
-                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                    <span>Disconnected</span>
-                </div>
             )}
 
             <div className="hidden lg:block fixed bottom-4 right-4 bg-dark-800 border border-dark-700 rounded-lg p-3 text-xs text-dark-400 z-10">

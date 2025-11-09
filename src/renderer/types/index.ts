@@ -77,3 +77,37 @@ export interface AuthTokens {
     refreshToken: string;
     expiresIn: number;
 }
+
+export type FriendRequestStatus = 'pending' | 'accepted' | 'rejected';
+
+export interface FriendRequest {
+    id: string;
+    fromUserId: string;
+    toUserId: string;
+    status: FriendRequestStatus;
+    createdAt: string;
+    updatedAt: string;
+    fromHandle: string;
+    fromDisplayName: string;
+    fromAvatarUrl?: string;
+    toHandle: string;
+    toDisplayName: string;
+    toAvatarUrl?: string;
+}
+
+export interface Friend {
+    userId: string;
+    handle: string;
+    displayName: string;
+    avatarUrl?: string;
+    status: UserStatus;
+    friendsSince: string;
+}
+
+export interface VoiceParticipant {
+    userId: string;
+    muted: boolean;
+    videoEnabled: boolean;
+    speaking: boolean;
+    joinedAt: string;
+}

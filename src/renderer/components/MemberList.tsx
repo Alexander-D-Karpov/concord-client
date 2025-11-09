@@ -29,6 +29,7 @@ const MemberList: React.FC = () => {
     const { getUser, fetchUsers } = useUsersStore();
     const [showInviteModal, setShowInviteModal] = useState(false);
     const currentMembers = currentRoomId ? members[currentRoomId] || [] : [];
+    const [lastRefresh, setLastRefresh] = useState(Date.now());
 
     const getDisplayName = useCallback((userId: string) => {
         if (userId === user?.id) {
@@ -78,6 +79,44 @@ const MemberList: React.FC = () => {
         if (currentRoomId) {
             loadMembers();
         }
+    }, [currentRoomId, loadMembers]);
+
+    useEffect(() => {
+        if (!currentRoomId) return;
+
+        const interval = setInterval(() => {
+            const now = Date.now();
+            if (now - lastRefresh >= 60000) {
+                loadMembers();
+                setLastRefresh(now);
+            }
+        }, 30000);
+
+        return () => clearInterval(interval);
+    }, [currentRoomId, lastRefresh, loadMembers]);
+
+    useEffect(() => {
+        if (!currentRoomId) return;
+
+        const handleVoiceUserJoined = (e: CustomEvent) => {
+            if (e.detail.room_id === currentRoomId) {
+                loadMembers();
+            }
+        };
+
+        const handleVoiceUserLeft = (e: CustomEvent) => {
+            if (e.detail.room_id === currentRoomId) {
+                loadMembers();
+            }
+        };
+
+        window.addEventListener('voice-user-joined' as any, handleVoiceUserJoined);
+        window.addEventListener('voice-user-left' as any, handleVoiceUserLeft);
+
+        return () => {
+            window.removeEventListener('voice-user-joined' as any, handleVoiceUserJoined);
+            window.removeEventListener('voice-user-left' as any, handleVoiceUserLeft);
+        };
     }, [currentRoomId, loadMembers]);
 
     const handleInviteMember = async (userId: string) => {

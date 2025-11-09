@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useAuthStore } from '../hooks/useAuthStore';
+import { useFriendsStore } from '../hooks/useFriendsStore';
+import { useUsersStore } from '../hooks/useUsersStore';
 import InviteMemberModal from './InviteMemberModal';
 
 const Sidebar: React.FC = () => {
     const { rooms, currentRoomId, setCurrentRoom } = useRoomsStore();
     const { user } = useAuthStore();
+    const { friends, loadFriends, sendRequest } = useFriendsStore();
+    const { getUser, fetchUsers } = useUsersStore();
     const navigate = useNavigate();
 
     const [showCreateRoom, setShowCreateRoom] = useState(false);
@@ -16,6 +20,53 @@ const Sidebar: React.FC = () => {
     const [creating, setCreating] = useState(false);
     const [showInviteAfterCreate, setShowInviteAfterCreate] = useState(false);
     const [createdRoomId, setCreatedRoomId] = useState<string | null>(null);
+    const [showAddFriend, setShowAddFriend] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [searching, setSearching] = useState(false);
+
+    useEffect(() => {
+        loadFriends();
+    }, [loadFriends]);
+
+    useEffect(() => {
+        const friendUserIds = friends.map(f => f.userId);
+        if (friendUserIds.length > 0) {
+            fetchUsers(friendUserIds);
+        }
+    }, [friends, fetchUsers]);
+
+    useEffect(() => {
+        const searchUsers = async () => {
+            if (searchQuery.length < 2) {
+                setSearchResults([]);
+                return;
+            }
+
+            setSearching(true);
+            try {
+                const response = await window.concord.searchUsers(searchQuery, 10);
+                setSearchResults(response.users || []);
+            } catch (err) {
+                console.error('Failed to search users:', err);
+            } finally {
+                setSearching(false);
+            }
+        };
+
+        const timeoutId = setTimeout(searchUsers, 300);
+        return () => clearTimeout(timeoutId);
+    }, [searchQuery]);
+
+    const handleSendRequest = async (userId: string) => {
+        try {
+            await sendRequest(userId);
+            setShowAddFriend(false);
+            setSearchQuery('');
+        } catch (err: any) {
+            console.error('Failed to send request:', err);
+        }
+    };
 
     const handleCreateRoom = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -58,6 +109,11 @@ const Sidebar: React.FC = () => {
         }
     };
 
+    const getFriendDisplayName = (userId: string) => {
+        const cachedUser = getUser(userId);
+        return cachedUser?.displayName || cachedUser?.handle || userId.split('-')[0];
+    };
+
     return (
         <div className="w-64 bg-dark-800 flex flex-col border-r border-dark-700 overflow-hidden h-screen">
             <div className="p-4 border-b border-dark-700 flex-shrink-0">
@@ -86,17 +142,102 @@ const Sidebar: React.FC = () => {
                 </div>
             </div>
 
-            <div className="p-4 flex items-center justify-between flex-shrink-0">
-                <h2 className="text-white font-semibold text-sm">Rooms</h2>
-                <button
-                    onClick={() => setShowCreateRoom(true)}
-                    className="p-1 hover:bg-dark-700 rounded transition"
-                    title="Create Room"
-                >
-                    <svg className="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                </button>
+            <div className="flex-1 overflow-y-auto">
+                <div className="p-2">
+                    <div className="flex items-center justify-between px-2 py-2">
+                        <h2 className="text-white font-semibold text-xs uppercase tracking-wider">Friends</h2>
+                        <button
+                            onClick={() => setShowAddFriend(true)}
+                            className="p-1 hover:bg-dark-700 rounded transition"
+                            title="Add Friend"
+                        >
+                            <svg className="w-4 h-4 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    {friends.length === 0 ? (
+                        <div className="px-3 py-2 text-center text-dark-400 text-xs">
+                            No friends yet
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            {friends.slice(0, 5).map((friend) => (
+                                <button
+                                    key={friend.userId}
+                                    className="w-full px-3 py-2 rounded-lg text-left transition hover:bg-dark-700 flex items-center space-x-2"
+                                >
+                                    <div className="relative">
+                                        <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                            <span className="text-white font-semibold text-xs">
+                                                {getFriendDisplayName(friend.userId).charAt(0).toUpperCase()}
+                                            </span>
+                                        </div>
+                                        <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-dark-800 ${
+                                            friend.status === 'online' ? 'bg-green-500' :
+                                                friend.status === 'away' ? 'bg-yellow-500' :
+                                                    friend.status === 'busy' ? 'bg-red-500' : 'bg-dark-500'
+                                        }`}></div>
+                                    </div>
+                                    <span className="truncate text-sm text-white">
+                                        {getFriendDisplayName(friend.userId)}
+                                    </span>
+                                </button>
+                            ))}
+                            {friends.length > 5 && (
+                                <button
+                                    onClick={() => navigate('/friends')}
+                                    className="w-full px-3 py-2 text-center text-primary-400 hover:text-primary-300 text-xs transition"
+                                >
+                                    View all {friends.length} friends
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                <div className="h-px bg-dark-700 my-2"></div>
+
+                <div className="p-2">
+                    <div className="flex items-center justify-between px-2 py-2">
+                        <h2 className="text-white font-semibold text-xs uppercase tracking-wider">Rooms</h2>
+                        <button
+                            onClick={() => setShowCreateRoom(true)}
+                            className="p-1 hover:bg-dark-700 rounded transition"
+                            title="Create Room"
+                        >
+                            <svg className="w-4 h-4 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    {rooms.length === 0 ? (
+                        <div className="px-3 py-2 text-center text-dark-400 text-xs">
+                            No rooms yet
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            {rooms.map((room) => (
+                                <button
+                                    key={room.id}
+                                    onClick={() => setCurrentRoom(room.id)}
+                                    className={`w-full px-3 py-2 rounded-lg text-left transition ${
+                                        currentRoomId === room.id
+                                            ? 'bg-primary-600 text-white'
+                                            : 'text-dark-300 hover:bg-dark-700 hover:text-white'
+                                    }`}
+                                >
+                                    <div className="flex items-center space-x-2 min-w-0">
+                                        <span className="text-lg flex-shrink-0">#</span>
+                                        <span className="truncate text-sm">{room.name}</span>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {showCreateRoom && (
@@ -166,6 +307,99 @@ const Sidebar: React.FC = () => {
                 </div>
             )}
 
+            {showAddFriend && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-dark-800 rounded-lg w-full max-w-md border border-dark-700">
+                        <div className="p-6 border-b border-dark-700">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-xl font-semibold text-white">Add Friend</h3>
+                                <button
+                                    onClick={() => {
+                                        setShowAddFriend(false);
+                                        setSearchQuery('');
+                                    }}
+                                    className="p-2 hover:bg-dark-700 rounded-lg transition"
+                                >
+                                    <svg className="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-6">
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search users by handle..."
+                                className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 mb-4"
+                                autoFocus
+                            />
+
+                            <div className="max-h-80 overflow-y-auto">
+                                {searching ? (
+                                    <div className="text-center py-8 text-dark-400">
+                                        <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                                        <p>Searching...</p>
+                                    </div>
+                                ) : searchResults.length === 0 ? (
+                                    <div className="text-center py-8 text-dark-400">
+                                        {searchQuery.length < 2 ? (
+                                            <p>Type at least 2 characters to search</p>
+                                        ) : (
+                                            <p>No users found</p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {searchResults.map((searchUser) => {
+                                            const isSelf = searchUser.id === user?.id;
+                                            const isFriend = friends.some(f => f.userId === searchUser.id);
+
+                                            return (
+                                                <div
+                                                    key={searchUser.id}
+                                                    className="flex items-center justify-between p-3 bg-dark-700 hover:bg-dark-600 rounded-lg transition"
+                                                >
+                                                    <div className="flex items-center space-x-3 flex-1 min-w-0">
+                                                        <div className="w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                                            <span className="text-white font-semibold">
+                                                                {(searchUser.display_name || searchUser.handle).charAt(0).toUpperCase()}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="text-white font-medium truncate">
+                                                                {searchUser.display_name || searchUser.handle}
+                                                            </div>
+                                                            <div className="text-dark-400 text-sm truncate">
+                                                                @{searchUser.handle}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {isSelf ? (
+                                                        <span className="text-dark-500 text-sm flex-shrink-0">You</span>
+                                                    ) : isFriend ? (
+                                                        <span className="text-green-400 text-sm flex-shrink-0">Friend</span>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleSendRequest(searchUser.id)}
+                                                            className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm rounded-lg transition flex-shrink-0"
+                                                        >
+                                                            Add
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showInviteAfterCreate && createdRoomId && (
                 <InviteMemberModal
                     roomId={createdRoomId}
@@ -176,33 +410,6 @@ const Sidebar: React.FC = () => {
                     onInvite={handleInviteAfterCreate}
                 />
             )}
-
-            <div className="flex-1 overflow-y-auto">
-                {rooms.length === 0 ? (
-                    <div className="p-4 text-center text-dark-400 text-sm">
-                        No rooms yet. Create one to get started!
-                    </div>
-                ) : (
-                    <div className="space-y-1 p-2">
-                        {rooms.map((room) => (
-                            <button
-                                key={room.id}
-                                onClick={() => setCurrentRoom(room.id)}
-                                className={`w-full px-3 py-2 rounded-lg text-left transition ${
-                                    currentRoomId === room.id
-                                        ? 'bg-primary-600 text-white'
-                                        : 'text-dark-300 hover:bg-dark-700 hover:text-white'
-                                }`}
-                            >
-                                <div className="flex items-center space-x-2 min-w-0">
-                                    <span className="text-lg flex-shrink-0">#</span>
-                                    <span className="truncate text-sm">{room.name}</span>
-                                </div>
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
         </div>
     );
 };

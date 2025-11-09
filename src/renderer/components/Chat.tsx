@@ -64,6 +64,7 @@ const Chat: React.FC = () => {
     const [uploadingFile, setUploadingFile] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: UiMessage } | null>(null);
     const [showInviteModal, setShowInviteModal] = useState(false);
+    const [sendError, setSendError] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messageInputRef = useRef<HTMLInputElement>(null);
 
@@ -102,21 +103,31 @@ const Chat: React.FC = () => {
         setLoading(true);
         try {
             const res = await window.concord.getMessages(currentRoomId, 50);
-            const mapped = (res?.messages ?? []).map(mapMessage);
+
+            if (!res || !res.messages) {
+                console.warn('[Chat] No messages in response');
+                setMessages(currentRoomId, []);
+                return;
+            }
+
+            const mapped = res.messages.map(mapMessage);
             setMessages(currentRoomId, mapped);
 
             const uniqueUserIds = [...new Set(mapped.map((m: UiMessage) => m.authorId))] as string[];
             const { fetchUsers } = useUsersStore.getState();
             await fetchUsers(uniqueUserIds);
-        } catch (err) {
-            console.error('Failed to load messages:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to load messages:', err);
+            setMessages(currentRoomId, []);
         } finally {
             setLoading(false);
         }
     }, [currentRoomId, setMessages]);
 
     useEffect(() => {
-        if (currentRoomId) loadMessages();
+        if (currentRoomId) {
+            loadMessages();
+        }
     }, [currentRoomId, loadMessages]);
 
     useEffect(() => {
@@ -133,34 +144,164 @@ const Chat: React.FC = () => {
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newMessage.trim() || !currentRoomId) return;
 
-        const content = newMessage;
+        if ((!newMessage.trim() && attachments.length === 0) || !currentRoomId) {
+            return;
+        }
+
+        if (!user?.id) {
+            setSendError('You must be logged in to send messages');
+            return;
+        }
+
+        setSendError(null);
+        const content = newMessage.trim();
+        const filesToSend = [...attachments];
+        const tempId = `temp-${Date.now()}`;
+
         setNewMessage('');
+        setAttachments([]);
+
+        const optimisticMessage: UiMessage = {
+            id: tempId,
+            roomId: currentRoomId,
+            authorId: user.id,
+            content: content,
+            createdAt: new Date().toISOString(),
+            deleted: false,
+            replyToId: replyingTo?.id,
+            replyCount: 0,
+            attachments: [],
+            mentions: extractMentions(content),
+            reactions: [],
+            pinned: false,
+        };
+
+        if (!editingMessage) {
+            addMessage(currentRoomId, optimisticMessage);
+            scrollToBottom();
+        }
 
         try {
             if (editingMessage) {
-                await window.concord.editMessage(editingMessage.id, content);
-                updateMessage(currentRoomId, editingMessage.id, content);
+                console.log('[Chat] Editing message:', editingMessage.id);
+                const response = await window.concord.editMessage(editingMessage.id, content);
+                console.log('[Chat] Edit message response:', response);
+
+                if (response) {
+                    updateMessage(currentRoomId, editingMessage.id, content);
+                }
                 setEditingMessage(null);
             } else {
                 const mentions = extractMentions(content);
-                const res = await window.concord.sendMessage(
+                let attachmentData: Array<{
+                    filename: string;
+                    content_type: string;
+                    data: number[];
+                    width?: number;
+                    height?: number;
+                }> | undefined;
+
+                if (filesToSend.length > 0) {
+                    console.log('[Chat] Processing attachments:', filesToSend.length);
+                    attachmentData = await Promise.all(
+                        filesToSend.map(async (file) => {
+                            const arrayBuffer = await file.arrayBuffer();
+                            const uint8Array = new Uint8Array(arrayBuffer);
+
+                            let width: number | undefined;
+                            let height: number | undefined;
+
+                            if (file.type.startsWith('image/')) {
+                                try {
+                                    const dimensions = await getImageDimensions(file);
+                                    width = dimensions.width;
+                                    height = dimensions.height;
+                                } catch (err) {
+                                    console.error('[Chat] Failed to get image dimensions:', err);
+                                }
+                            }
+
+                            return {
+                                filename: file.name,
+                                content_type: file.type,
+                                data: Array.from(uint8Array),
+                                width,
+                                height,
+                            };
+                        })
+                    );
+
+                    console.log('[Chat] Attachments processed:', {
+                        count: attachmentData.length,
+                        totalSize: attachmentData.reduce((sum, att) => sum + att.data.length, 0),
+                    });
+                }
+
+                console.log('[Chat] Sending message:', {
+                    roomId: currentRoomId,
+                    contentLength: content.length,
+                    hasAttachments: !!attachmentData,
+                    replyToId: replyingTo?.id,
+                    mentionsCount: mentions.length,
+                });
+
+                const response = await window.concord.sendMessage(
                     currentRoomId,
                     content,
                     replyingTo?.id,
-                    mentions
+                    mentions,
+                    attachmentData
                 );
-                if (res?.message) {
-                    const mapped = mapMessage(res.message);
+
+                console.log('[Chat] Send message response:', response);
+
+                deleteMessage(currentRoomId, tempId);
+
+                if (response && response.message) {
+                    const mapped = mapMessage(response.message);
+                    console.log('[Chat] Mapped message:', mapped);
                     addMessage(currentRoomId, mapped);
+                    scrollToBottom();
+                } else {
+                    console.warn('[Chat] No message in response, message should come through event stream');
                 }
+
                 setReplyingTo(null);
             }
-        } catch (err) {
-            console.error('Failed to send message:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to send message:', err);
+
+            deleteMessage(currentRoomId, tempId);
+
             setNewMessage(content);
+            setAttachments(filesToSend);
+
+            setSendError(err?.message || 'Failed to send message. Please try again.');
+
+            setTimeout(() => {
+                setSendError(null);
+            }, 5000);
         }
+    };
+
+    const getImageDimensions = (file: File): Promise<{ width: number; height: number }> => {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                resolve({ width: img.width, height: img.height });
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error('Failed to load image'));
+            };
+
+            img.src = url;
+        });
     };
 
     const extractMentions = (content: string): string[] => {
@@ -177,8 +318,8 @@ const Chat: React.FC = () => {
         try {
             await window.concord.deleteMessage(messageId);
             deleteMessage(currentRoomId, messageId);
-        } catch (err) {
-            console.error('Failed to delete message:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to delete message:', err);
         }
     };
 
@@ -191,41 +332,54 @@ const Chat: React.FC = () => {
                 await window.concord.pinMessage(currentRoomId, messageId);
             }
             await loadMessages();
-        } catch (err) {
-            console.error('Failed to pin/unpin message:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to pin/unpin message:', err);
         }
     };
 
     const handleAddReaction = async (messageId: string, emoji: string) => {
         try {
             await window.concord.addReaction(messageId, emoji);
-            await loadMessages();
-        } catch (err) {
-            console.error('Failed to add reaction:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to add reaction:', err);
         }
     };
 
     const handleRemoveReaction = async (messageId: string, emoji: string) => {
         try {
             await window.concord.removeReaction(messageId, emoji);
-            await loadMessages();
-        } catch (err) {
-            console.error('Failed to remove reaction:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to remove reaction:', err);
         }
     };
 
+    const [attachments, setAttachments] = useState<File[]>([]);
+
     const handleFileUpload = async (file: File) => {
         if (!currentRoomId) return;
-        setUploadingFile(true);
-        try {
-            const result = await window.concord.uploadAttachment(file);
-            console.log('File uploaded:', result);
-        } catch (err) {
-            console.error('Failed to upload file:', err);
-        } finally {
-            setUploadingFile(false);
-        }
+        setAttachments(prev => [...prev, file]);
     };
+
+    const removeAttachment = (index: number) => {
+        setAttachments(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+        const items = e.clipboardData.items;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+
+            if (item.kind === 'file') {
+                e.preventDefault();
+                const file = item.getAsFile();
+
+                if (file) {
+                    setAttachments(prev => [...prev, file]);
+                }
+            }
+        }
+    }, []);
 
     const handleInviteMember = async (userId: string) => {
         if (!currentRoomId) return;
@@ -234,8 +388,8 @@ const Chat: React.FC = () => {
             const res = await window.concord.getMembers(currentRoomId);
             const { setMembers } = useRoomsStore.getState();
             setMembers(currentRoomId, res?.members || []);
-        } catch (err) {
-            console.error('Failed to invite member:', err);
+        } catch (err: any) {
+            console.error('[Chat] Failed to invite member:', err);
             throw err;
         }
     };
@@ -356,6 +510,17 @@ const Chat: React.FC = () => {
                 </div>
             )}
 
+            {sendError && (
+                <div className="bg-red-500 bg-opacity-10 border-b border-red-500 p-3 flex-shrink-0">
+                    <div className="flex items-center space-x-2">
+                        <svg className="w-5 h-5 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="text-sm text-red-500">{sendError}</span>
+                    </div>
+                </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {loading ? (
                     <div className="flex items-center justify-center h-full">
@@ -374,11 +539,13 @@ const Chat: React.FC = () => {
                             ? roomMessages.find(m => m.id === msg.replyToId)
                             : null;
 
+                        const isOptimistic = msg.id.startsWith('temp-');
+
                         return (
                             <div
                                 key={msg.id}
-                                className="flex items-start space-x-3 group"
-                                onContextMenu={(e) => handleContextMenu(e, msg)}
+                                className={`flex items-start space-x-3 group ${isOptimistic ? 'opacity-60' : ''}`}
+                                onContextMenu={(e) => !isOptimistic && handleContextMenu(e, msg)}
                             >
                                 <div className="w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
                                     <span className="text-white font-semibold text-sm">
@@ -400,6 +567,9 @@ const Chat: React.FC = () => {
                                             <svg className="w-4 h-4 text-primary-400" fill="currentColor" viewBox="0 0 20 20">
                                                 <path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z" />
                                             </svg>
+                                        )}
+                                        {isOptimistic && (
+                                            <span className="text-xs text-dark-500 flex-shrink-0">(sending...)</span>
                                         )}
                                     </div>
 
@@ -425,8 +595,9 @@ const Chat: React.FC = () => {
                                         <MessageReactions
                                             messageId={msg.id}
                                             reactions={msg.reactions}
-                                            onAddReaction={() => setShowReactionPicker(msg.id)}
+                                            onAddReaction={(emoji) => handleAddReaction(msg.id, emoji)}
                                             onRemoveReaction={(emoji) => handleRemoveReaction(msg.id, emoji)}
+                                            onOpenPicker={() => setShowReactionPicker(msg.id)}
                                         />
                                     )}
 
@@ -469,6 +640,50 @@ const Chat: React.FC = () => {
                     </div>
                 )}
 
+                {attachments.length > 0 && (
+                    <div className="px-4 pb-2">
+                        <div className="flex flex-wrap gap-2">
+                            {attachments.map((file, index) => (
+                                <div
+                                    key={index}
+                                    className="relative bg-dark-800 border border-dark-600 rounded-lg p-2 flex items-center space-x-2"
+                                >
+                                    <div className="flex-shrink-0">
+                                        {file.type.startsWith('image/') ? (
+                                            <img
+                                                src={URL.createObjectURL(file)}
+                                                alt={file.name}
+                                                className="w-12 h-12 object-cover rounded"
+                                            />
+                                        ) : (
+                                            <div className="w-12 h-12 bg-dark-700 rounded flex items-center justify-center">
+                                                <svg className="w-6 h-6 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                                </svg>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm text-white truncate">{file.name}</div>
+                                        <div className="text-xs text-dark-400">
+                                            {(file.size / 1024).toFixed(1)} KB
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeAttachment(index)}
+                                        className="flex-shrink-0 p-1 hover:bg-dark-700 rounded transition"
+                                    >
+                                        <svg className="w-4 h-4 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <form onSubmit={handleSendMessage} className="flex space-x-2">
                     <FileUpload onFileSelect={handleFileUpload} disabled={uploadingFile} />
                     <input
@@ -476,12 +691,13 @@ const Chat: React.FC = () => {
                         type="text"
                         value={newMessage}
                         onChange={e => setNewMessage(e.target.value)}
+                        onPaste={handlePaste}
                         placeholder={`Message # ${currentRoom?.name}`}
                         className="flex-1 min-w-0 px-4 py-3 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     />
                     <button
                         type="submit"
-                        disabled={!newMessage.trim()}
+                        disabled={!newMessage.trim() && attachments.length === 0}
                         className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                     >
                         {editingMessage ? 'Save' : 'Send'}
