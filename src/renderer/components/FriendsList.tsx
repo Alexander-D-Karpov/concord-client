@@ -338,6 +338,21 @@ const FriendCard: React.FC<{
 }> = ({ friend, onRemove, onBlock, loading }) => {
     const [showMenu, setShowMenu] = useState(false);
 
+    const getStatusColor = (status?: string) => {
+        switch (status) {
+            case 'online':
+                return 'bg-green-500';
+            case 'idle':
+                return 'bg-yellow-500';
+            case 'dnd':
+                return 'bg-red-500';
+            default:
+                return 'bg-dark-500';
+        }
+    };
+
+    const getStatusLabel = (status?: string) => status || 'offline';
+
     return (
         <div className="flex items-center justify-between p-3 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
             <div className="flex items-center space-x-3">
@@ -345,8 +360,14 @@ const FriendCard: React.FC<{
                     {friend.displayName[0].toUpperCase()}
                 </div>
                 <div>
-                    <div className="font-semibold text-white">{friend.displayName}</div>
-                    <div className="text-sm text-dark-400">@{friend.handle}</div>
+                    <div className="font-semibold text-white flex items-center space-x-2">
+                        <span>{friend.displayName}</span>
+                        <span className={`w-2 h-2 rounded-full ${getStatusColor(friend.status)}`} />
+                    </div>
+                    <div className="text-sm text-dark-400 flex items-center space-x-2">
+                        <span>@{friend.handle}</span>
+                        <span className="text-xs capitalize">{getStatusLabel(friend.status)}</span>
+                    </div>
                 </div>
             </div>
             <div className="relative">

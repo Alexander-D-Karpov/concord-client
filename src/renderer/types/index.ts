@@ -1,11 +1,11 @@
-export type UserStatus = 'online' | 'offline' | 'away' | 'busy';
+export type UserStatus = 'online' | 'offline' | 'idle' | 'dnd' | string;
 
 export interface User {
     id: string;
     handle: string;
     displayName: string;
     avatarUrl?: string;
-    createdAt: string;
+    createdAt?: string;
     status?: UserStatus;
     bio?: string;
 }
@@ -24,9 +24,10 @@ export interface Room {
 export interface Member {
     userId: string;
     roomId: string;
-    role: 'member' | 'moderator' | 'admin';
+    role: string;
     joinedAt: string;
     nickname?: string;
+    status?: UserStatus;
 }
 
 export interface MessageAttachment {

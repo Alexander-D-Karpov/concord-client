@@ -2,7 +2,8 @@ import { useEffect, useCallback } from 'react';
 import { useRoomsStore } from './useRoomsStore';
 import { useMessagesStore } from './useMessagesStore';
 import { useFriendsStore } from './useFriendsStore';
-import { Message, Member, MessageReaction } from '../types';
+import { useUsersStore } from './useUsersStore';
+import { Message, Member, MessageReaction, Room } from '../types';
 
 const tsToIso = (ts: any): string => {
     if (!ts) return '';
@@ -48,6 +49,19 @@ const mapMember = (m: any): Member => ({
     role: m.role || 'member',
     joinedAt: tsToIso(m.joined_at),
     nickname: m.nickname,
+    status: m.status || 'offline',
+});
+
+
+const mapRoom = (r: any): Room => ({
+    id: r.id,
+    name: r.name,
+    createdBy: r.created_by,
+    voiceServerId: r.voice_server_id,
+    region: r.region,
+    createdAt: tsToIso(r.created_at),
+    description: r.description,
+    isPrivate: r.is_private,
 });
 
 const mapReaction = (r: any): MessageReaction => ({
@@ -59,142 +73,163 @@ const mapReaction = (r: any): MessageReaction => ({
 });
 
 export const useEventStream = () => {
-    const { setMembers } = useRoomsStore();
-    const { addMessage, updateMessage, deleteMessage, addReaction, removeReaction } = useMessagesStore();
+    const { setMembers, setRooms, rooms, updateRoom: updateRoomInStore } = useRoomsStore();
+    const { addMessage, updateMessage, deleteMessage, addReaction, removeReaction, setPinned } = useMessagesStore();
     const { loadFriends, loadPendingRequests } = useFriendsStore();
+    const { setUser } = useUsersStore();
 
     const refreshRoomMembers = useCallback(async (roomId: string) => {
         try {
-            console.log('[EventStream] Refreshing members for room:', roomId);
             const res = await window.concord.getMembers(roomId);
-            const members: Member[] = (res?.members || []).map(mapMember);
-            setMembers(roomId, members);
-        } catch (err) {
-            console.error('[EventStream] Failed to refresh members:', err);
-        }
+            setMembers(roomId, (res?.members || []).map(mapMember));
+        } catch {}
     }, [setMembers]);
 
     const handleEvent = useCallback((raw: any) => {
-        console.log('[EventStream] Event received:', raw?.payload);
+        // raw is the full ServerEvent from gRPC:
+        // {
+        //   event_id: string,
+        //   created_at: {...},
+        //   message_created?: {...},
+        //   message_edited?: {...},
+        //   ...
+        //   payload?: "message_created" | "message_edited" | ...
+        // }
+        if (!raw) return;
 
-        try {
-            const normalizeEvent = (ev: any) => {
-                const payload = (typeof ev.payload === 'object' && ev.payload) ? ev.payload : {
-                    message_created: ev.message_created,
-                    message_edited: ev.message_edited,
-                    message_deleted: ev.message_deleted,
-                    message_reaction_added: ev.message_reaction_added,
-                    message_reaction_removed: ev.message_reaction_removed,
-                    message_pinned: ev.message_pinned,
-                    message_unpinned: ev.message_unpinned,
-                    member_joined: ev.member_joined,
-                    member_removed: ev.member_removed,
-                    member_nickname_changed: ev.member_nickname_changed,
-                    voice_state_changed: ev.voice_state_changed,
-                    role_changed: ev.role_changed,
-                    user_status_changed: ev.user_status_changed,
-                    voice_user_joined: ev.voice_user_joined,
-                    voice_user_left: ev.voice_user_left,
-                    room_updated: ev.room_updated,
-                    friend_request_created: ev.friend_request_created,
-                    friend_request_updated: ev.friend_request_updated,
-                    ack: ev.ack,
-                };
+        // Ignore raw.payload – it's just the oneof selector string.
+        const p = raw;
 
-                return {
-                    event_id: ev.event_id ?? ev.eventId,
-                    created_at: ev.created_at ?? ev.createdAt,
-                    payload,
-                };
-            };
-
-            const event = normalizeEvent(raw);
-            const p = event.payload;
-            if (!p) return;
-
-            if (p.message_created) {
-                const msg = mapMessage(p.message_created.message);
-                addMessage(msg.roomId, msg);
-                return;
-            }
-
-            if (p.message_edited) {
-                const msg = mapMessage(p.message_edited.message);
-                updateMessage(msg.roomId, msg.id, msg.content);
-                return;
-            }
-
-            if (p.message_deleted) {
-                const { room_id, message_id } = p.message_deleted;
-                deleteMessage(room_id, message_id);
-                return;
-            }
-
-            if (p.message_reaction_added) {
-                const { room_id, message_id, reaction } = p.message_reaction_added;
-                if (reaction) {
-                    addReaction(room_id, message_id, mapReaction(reaction));
-                }
-                return;
-            }
-
-            if (p.message_reaction_removed) {
-                const { room_id, message_id, reaction } = p.message_reaction_removed;
-                if (reaction?.id) {
-                    removeReaction(room_id, message_id, { id: reaction.id });
-                } else if (reaction) {
-                    removeReaction(room_id, message_id, {
-                        userId: reaction.user_id ?? reaction.userId,
-                        emoji: reaction.emoji,
-                    });
-                }
-                return;
-            }
-
-            if (p.member_joined) {
-                const member = mapMember(p.member_joined.member);
-                refreshRoomMembers(member.roomId);
-                return;
-            }
-
-            if (p.member_removed) {
-                const { room_id } = p.member_removed;
-                refreshRoomMembers(room_id);
-                return;
-            }
-
-            if (p.friend_request_created) {
-                loadPendingRequests();
-                return;
-            }
-
-            if (p.friend_request_updated) {
-                loadPendingRequests();
-                loadFriends();
-                return;
-            }
-        } catch (err) {
-            console.error('[EventStream] Failed to handle event:', err);
+        // Message events
+        if (p.message_created?.message) {
+            const msg = mapMessage(p.message_created.message);
+            addMessage(msg.roomId, msg);
+            return;
         }
-    }, [addMessage, updateMessage, deleteMessage, addReaction, removeReaction, refreshRoomMembers, loadFriends, loadPendingRequests]);
+
+        if (p.message_edited?.message) {
+            const msg = mapMessage(p.message_edited.message);
+            updateMessage(msg.roomId, msg.id, msg.content);
+            return;
+        }
+
+        if (p.message_deleted) {
+            deleteMessage(p.message_deleted.room_id, p.message_deleted.message_id);
+            return;
+        }
+
+        if (p.message_reaction_added?.reaction) {
+            addReaction(
+                p.message_reaction_added.room_id,
+                p.message_reaction_added.message_id,
+                mapReaction(p.message_reaction_added.reaction)
+            );
+            return;
+        }
+
+        if (p.message_reaction_removed) {
+            const { room_id, message_id, reaction_id, user_id } = p.message_reaction_removed;
+            removeReaction(
+                room_id,
+                message_id,
+                reaction_id ? { id: reaction_id } : { userId: user_id }
+            );
+            return;
+        }
+
+        if (p.message_pinned) {
+            setPinned(p.message_pinned.room_id, p.message_pinned.message_id, true);
+            return;
+        }
+
+        if (p.message_unpinned) {
+            setPinned(p.message_unpinned.room_id, p.message_unpinned.message_id, false);
+            return;
+        }
+
+        // Member events
+        if (p.member_joined?.member) {
+            refreshRoomMembers(p.member_joined.member.room_id);
+            return;
+        }
+
+        if (p.member_removed) {
+            refreshRoomMembers(p.member_removed.room_id);
+            return;
+        }
+
+        if (p.member_nickname_changed) {
+            refreshRoomMembers(p.member_nickname_changed.room_id);
+            return;
+        }
+
+        if (p.role_changed) {
+            refreshRoomMembers(p.role_changed.room_id);
+            return;
+        }
+
+        // Room events
+        if (p.room_updated?.room) {
+            const room = mapRoom(p.room_updated.room);
+            updateRoomInStore(room);
+            return;
+        }
+
+        // Voice events
+        if (p.voice_state_changed) {
+            window.dispatchEvent(
+                new CustomEvent('voice-state-changed', { detail: p.voice_state_changed })
+            );
+            return;
+        }
+
+        if (p.voice_user_joined) {
+            window.dispatchEvent(
+                new CustomEvent('voice-user-joined', { detail: p.voice_user_joined })
+            );
+            return;
+        }
+
+        if (p.voice_user_left) {
+            window.dispatchEvent(
+                new CustomEvent('voice-user-left', { detail: p.voice_user_left })
+            );
+            return;
+        }
+
+        // User events
+        if (p.user_status_changed) {
+            const { user_id, status } = p.user_status_changed;
+            setUser({ id: user_id, status } as any);
+            return;
+        }
+
+        // Friend events
+        if (p.friend_request_created || p.friend_request_updated) {
+            loadPendingRequests();
+            loadFriends();
+            return;
+        }
+    }, [
+        addMessage,
+        updateMessage,
+        deleteMessage,
+        addReaction,
+        removeReaction,
+        setPinned,
+        refreshRoomMembers,
+        updateRoomInStore,
+        setUser,
+        loadFriends,
+        loadPendingRequests,
+    ]);
 
     useEffect(() => {
-        console.log('[EventStream] Setting up event listeners');
-
-        const unsubEvent = window.concord.onStreamEvent?.((ev) => {
-            handleEvent(ev);
-        });
-
-        const unsubError = window.concord.onStreamError?.((err) => {
-            console.error('[EventStream] Stream error:', err);
-        });
-
-        const unsubEnd = window.concord.onStreamEnd?.(() => {
-            console.log('[EventStream] Stream ended');
-        });
+        const unsubEvent = window.concord.onStreamEvent?.(handleEvent);
+        const unsubError = window.concord.onStreamError?.((err) => console.error('[Stream] Error:', err));
+        const unsubEnd = window.concord.onStreamEnd?.(() => console.log('[Stream] Ended'));
 
         return () => {
-            console.log('[EventStream] Cleaning up event listeners');
             unsubEvent?.();
             unsubError?.();
             unsubEnd?.();

@@ -34,6 +34,9 @@ export const useVoiceClient = (roomId?: string) => {
     const stateRef = useRef(state);
     stateRef.current = state;
 
+    const roomIdRef = useRef(roomId);
+    roomIdRef.current = roomId;
+
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const micStreamRef = useRef<MediaStream | null>(null);
@@ -153,7 +156,8 @@ export const useVoiceClient = (roomId?: string) => {
     }, [stopAudioMonitoring]);
 
     const connect = useCallback(async (audioOnly: boolean = false) => {
-        if (!roomId || stateRef.current.connected) return;
+        const currentRoomId = roomIdRef.current;
+        if (!currentRoomId || stateRef.current.connected) return;
 
         setState(prev => ({ ...prev, connecting: true, error: null }));
 
@@ -163,16 +167,14 @@ export const useVoiceClient = (roomId?: string) => {
 
             try {
                 await navigator.mediaDevices.getUserMedia({ audio: true });
-            } catch (err) {
-                console.warn('Microphone not available:', err);
+            } catch {
                 hasAudio = false;
             }
 
             if (!audioOnly) {
                 try {
                     await navigator.mediaDevices.getUserMedia({ video: true });
-                } catch (err) {
-                    console.warn('Camera not available:', err);
+                } catch {
                     hasVideo = false;
                 }
             }
@@ -186,7 +188,7 @@ export const useVoiceClient = (roomId?: string) => {
                 }));
             }
 
-            const result = await window.concord.joinVoice(roomId, !hasVideo);
+            const result = await window.concord.joinVoice(currentRoomId, !hasVideo);
 
             const participants = new Map<number, ParticipantState>();
 
@@ -221,33 +223,44 @@ export const useVoiceClient = (roomId?: string) => {
                 error: err?.message || 'Failed to join voice',
             }));
         }
-    }, [roomId, startAudioMonitoring]);
+    }, [startAudioMonitoring]);
 
     const disconnect = useCallback(async () => {
-        if (!stateRef.current.connected) return;
+        const currentRoomId = roomIdRef.current;
+        if (!stateRef.current.connected || !currentRoomId) return;
 
         try {
-            await window.concord.leaveVoice();
+            await window.concord.leaveVoice(currentRoomId);
 
             stopAudioMonitoring();
 
-            setState(prev => ({
-                ...prev,
+            setState({
                 connected: false,
+                connecting: false,
                 muted: false,
                 deafened: false,
                 videoEnabled: false,
                 speaking: false,
+                error: null,
                 participants: new Map(),
-            }));
+            });
         } catch (err: any) {
             console.error('Failed to leave voice:', err);
         }
     }, [stopAudioMonitoring]);
 
     const setMuted = useCallback(async (muted: boolean) => {
+        const currentRoomId = roomIdRef.current;
+        if (!currentRoomId) return;
+
         try {
-            await window.concord.setMuted?.(muted);
+            const currentState = stateRef.current;
+            await window.concord.setMediaPrefs(
+                currentRoomId,
+                !currentState.videoEnabled,
+                currentState.videoEnabled,
+                muted
+            );
             setState(prev => ({ ...prev, muted, speaking: muted ? false : prev.speaking }));
         } catch (err: any) {
             console.error('Failed to set muted:', err);
@@ -263,8 +276,17 @@ export const useVoiceClient = (roomId?: string) => {
     }, [setMuted]);
 
     const setVideoEnabled = useCallback(async (enabled: boolean) => {
+        const currentRoomId = roomIdRef.current;
+        if (!currentRoomId) return;
+
         try {
-            await window.concord.setVideoEnabled?.(enabled);
+            const currentState = stateRef.current;
+            await window.concord.setMediaPrefs(
+                currentRoomId,
+                !enabled,
+                enabled,
+                currentState.muted
+            );
             setState(prev => ({ ...prev, videoEnabled: enabled }));
         } catch (err: any) {
             console.error('Failed to set video enabled:', err);

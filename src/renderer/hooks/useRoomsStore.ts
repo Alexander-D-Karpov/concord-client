@@ -7,6 +7,8 @@ interface RoomsState {
     members: Record<string, Member[]>;
     setRooms: (rooms: Room[]) => void;
     addRoom: (room: Room) => void;
+    updateRoom: (room: Room) => void;
+    removeRoom: (roomId: string) => void;
     setCurrentRoom: (roomId: string | null) => void;
     setMembers: (roomId: string, members: Member[]) => void;
 }
@@ -15,11 +17,24 @@ export const useRoomsStore = create<RoomsState>((set) => ({
     rooms: [],
     currentRoomId: null,
     members: {},
+
     setRooms: (rooms) => set({ rooms }),
+
     addRoom: (room) => set((state) => ({ rooms: [...state.rooms, room] })),
-    setCurrentRoom: (roomId) => set({ currentRoomId: roomId }),
-    setMembers: (roomId, members) =>
+
+    updateRoom: (room) =>
         set((state) => ({
-            members: { ...state.members, [roomId]: members },
+            rooms: state.rooms.map((r) => (r.id === room.id ? { ...r, ...room } : r)),
         })),
+
+    removeRoom: (roomId) =>
+        set((state) => ({
+            rooms: state.rooms.filter((r) => r.id !== roomId),
+            currentRoomId: state.currentRoomId === roomId ? null : state.currentRoomId,
+        })),
+
+    setCurrentRoom: (roomId) => set({ currentRoomId: roomId }),
+
+    setMembers: (roomId, members) =>
+        set((state) => ({ members: { ...state.members, [roomId]: members } })),
 }));

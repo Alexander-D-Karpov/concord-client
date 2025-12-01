@@ -63,6 +63,8 @@ const MemberList: React.FC = () => {
                 joinedAt: new Date(
                     Number(m.joined_at?.seconds || 0) * 1000
                 ).toISOString(),
+                nickname: m.nickname,
+                status: m.status || 'offline',
             }));
             setMembers(currentRoomId, mapped);
 
@@ -152,6 +154,19 @@ const MemberList: React.FC = () => {
         return getDisplayName(a.userId).localeCompare(getDisplayName(b.userId));
     });
 
+    const getStatusColor = (status?: string) => {
+        switch (status) {
+            case 'online':
+                return 'bg-green-500';
+            case 'idle':
+                return 'bg-yellow-500';
+            case 'dnd':
+                return 'bg-red-500';
+            default:
+                return 'bg-dark-500'; // offline / unknown
+        }
+    };
+
     return (
         <div className="w-60 bg-dark-800 border-l border-dark-700 flex flex-col h-screen overflow-hidden">
             <div className="p-4 border-b border-dark-700 flex items-center justify-between flex-shrink-0">
@@ -196,7 +211,7 @@ const MemberList: React.FC = () => {
                                         </div>
                                     )}
                                 </div>
-                                <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0"></div>
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColor(member.status)}`}></div>
                             </div>
                         ))
                     )}

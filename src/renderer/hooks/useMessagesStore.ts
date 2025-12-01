@@ -9,6 +9,7 @@ interface MessagesState {
     setMessages: (roomId: string, messages: Message[]) => void;
     addReaction: (roomId: string, messageId: string, reaction: MessageReaction) => void;
     removeReaction: (roomId: string, messageId: string, criteria: { id?: string; userId?: string; emoji?: string }) => void;
+    setPinned: (roomId: string, messageId: string, pinned: boolean) => void;
 }
 
 export const useMessagesStore = create<MessagesState>((set) => ({
@@ -18,102 +19,102 @@ export const useMessagesStore = create<MessagesState>((set) => ({
         set((state) => {
             const list = state.messages[roomId] || [];
             const idx = list.findIndex((m) => m.id === message.id);
-
             if (idx !== -1) {
-                const next = list.slice();
-                next[idx] = { ...list[idx], ...message, reactions: message.reactions ?? list[idx].reactions };
-                console.log('[MessagesStore] Updated existing message:', message.id);
+                const next = [...list];
+                next[idx] = { ...list[idx], ...message };
                 return { messages: { ...state.messages, [roomId]: next } };
             }
-
-            console.log('[MessagesStore] Added new message:', message.id);
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: [...list, { ...message, reactions: message.reactions ?? [] }]
-                }
-            };
+            return { messages: { ...state.messages, [roomId]: [...list, message] } };
         }),
 
     updateMessage: (roomId, messageId, content) =>
         set((state) => {
             const list = state.messages[roomId] || [];
-            const next = list.map((m) =>
-                (m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m)
-            );
-            console.log('[MessagesStore] Updated message content:', messageId);
-            return { messages: { ...state.messages, [roomId]: next } };
+            return {
+                messages: {
+                    ...state.messages,
+                    [roomId]: list.map((m) =>
+                        m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m
+                    ),
+                },
+            };
         }),
 
     deleteMessage: (roomId, messageId) =>
         set((state) => {
             const list = state.messages[roomId] || [];
-
             if (messageId.startsWith('temp-')) {
-                const next = list.filter(m => m.id !== messageId);
-                console.log('[MessagesStore] Removed temporary message:', messageId);
-                return { messages: { ...state.messages, [roomId]: next } };
+                return { messages: { ...state.messages, [roomId]: list.filter((m) => m.id !== messageId) } };
             }
-
-            const next = list.map((m) => (m.id === messageId ? { ...m, deleted: true } : m));
-            console.log('[MessagesStore] Marked message as deleted:', messageId);
-            return { messages: { ...state.messages, [roomId]: next } };
+            return {
+                messages: {
+                    ...state.messages,
+                    [roomId]: list.map((m) => (m.id === messageId ? { ...m, deleted: true } : m)),
+                },
+            };
         }),
 
-    setMessages: (roomId, messages) => {
-        console.log('[MessagesStore] Set messages for room:', roomId, 'count:', messages.length);
-        return set((state) => ({ messages: { ...state.messages, [roomId]: messages } }));
-    },
+    setMessages: (roomId, messages) =>
+        set((state) => ({ messages: { ...state.messages, [roomId]: messages } })),
 
     addReaction: (roomId, messageId, reaction) =>
         set((state) => {
             const list = state.messages[roomId] || [];
-            const idx = list.findIndex((m) => m.id === messageId);
-            if (idx === -1) {
-                console.warn('[MessagesStore] Message not found for reaction:', messageId);
-                return { messages: state.messages };
-            }
-
-            const msg = list[idx];
-            const exists = (msg.reactions || []).find(
-                (r) => (reaction.id && r.id === reaction.id) || (r.userId === reaction.userId && r.emoji === reaction.emoji)
-            );
-
-            const nextReacts = exists
-                ? (msg.reactions || []).map((r) =>
-                    (reaction.id && r.id === reaction.id) || (r.userId === reaction.userId && r.emoji === reaction.emoji)
-                        ? { ...r, ...reaction }
-                        : r
-                )
-                : [...(msg.reactions || []), reaction];
-
-            const next = list.slice();
-            next[idx] = { ...msg, reactions: nextReacts };
-            console.log('[MessagesStore] Added/updated reaction:', reaction.emoji);
-            return { messages: { ...state.messages, [roomId]: next } };
+            return {
+                messages: {
+                    ...state.messages,
+                    [roomId]: list.map((m) => {
+                        if (m.id !== messageId) return m;
+                        const reactions = m.reactions || [];
+                        const exists = reactions.find(
+                            (r) => r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji)
+                        );
+                        return {
+                            ...m,
+                            reactions: exists
+                                ? reactions.map((r) =>
+                                    r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji)
+                                        ? { ...r, ...reaction }
+                                        : r
+                                )
+                                : [...reactions, reaction],
+                        };
+                    }),
+                },
+            };
         }),
 
     removeReaction: (roomId, messageId, criteria) =>
         set((state) => {
             const list = state.messages[roomId] || [];
-            const idx = list.findIndex((m) => m.id === messageId);
-            if (idx === -1) {
-                console.warn('[MessagesStore] Message not found for reaction removal:', messageId);
-                return { messages: state.messages };
-            }
+            return {
+                messages: {
+                    ...state.messages,
+                    [roomId]: list.map((m) => {
+                        if (m.id !== messageId) return m;
+                        return {
+                            ...m,
+                            reactions: (m.reactions || []).filter((r) => {
+                                if (criteria.id) return r.id !== criteria.id;
+                                if (criteria.userId && criteria.emoji)
+                                    return !(r.userId === criteria.userId && r.emoji === criteria.emoji);
+                                if (criteria.userId) return r.userId !== criteria.userId;
+                                return true;
+                            }),
+                        };
+                    }),
+                },
+            };
+        }),
 
-            const msg = list[idx];
-            const nextReacts = (msg.reactions || []).filter((r) => {
-                if (criteria.id) return r.id !== criteria.id;
-                if (criteria.userId && criteria.emoji) return !(r.userId === criteria.userId && r.emoji === criteria.emoji);
-                if (criteria.userId) return r.userId !== criteria.userId;
-                if (criteria.emoji) return r.emoji !== criteria.emoji;
-                return true;
-            });
-
-            const next = list.slice();
-            next[idx] = { ...msg, reactions: nextReacts };
-            console.log('[MessagesStore] Removed reaction');
-            return { messages: { ...state.messages, [roomId]: next } };
+    setPinned: (roomId, messageId, pinned) =>
+        set((state) => {
+            const list = state.messages[roomId] || [];
+            return {
+                messages: {
+                    ...state.messages,
+                    [roomId]: list.map((m) => (m.id === messageId ? { ...m, pinned } : m)),
+                },
+            };
         }),
 }));
