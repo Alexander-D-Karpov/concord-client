@@ -6,14 +6,40 @@ import { VoiceClient, VoiceConfig } from './voice-client';
 let mainWindow: BrowserWindow | null = null;
 let client: ConcordClient | null = null;
 let voiceClient: VoiceClient | null = null;
+let currentVoiceRoomId: string | null = null;
+let currentUserId: string | null = null;
 let currentStream: any = null;
 let streamInitialized = false;
 let keepaliveInterval: NodeJS.Timeout | null = null;
-let currentVoiceRoomId: string | null = null;
+let currentVoiceAudioOnly: boolean | null = null;
+let voiceJoinPromise: Promise<any> | null = null;
+let voiceJoinKey: string | null = null;
 
-const LOG_IPC = true;
-const LOG_STREAM_EVENTS = true;
-const LOG_VERBOSE = true;
+
+
+const LOG_IPC = false;
+const LOG_STREAM_EVENTS = false;
+const LOG_VERBOSE = false;
+
+function configureHardwareAcceleration() {
+    app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
+    if (process.platform === 'linux') {
+        app.commandLine.appendSwitch('disable-gpu-sandbox');
+        app.commandLine.appendSwitch('use-angle', 'gl');
+        app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiVideoEncoder');
+        app.commandLine.appendSwitch('use-gl', 'desktop');
+    }
+
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+        app.commandLine.appendSwitch('enable-gpu-rasterization');
+        app.commandLine.appendSwitch('enable-accelerated-video-decode');
+        app.commandLine.appendSwitch('enable-accelerated-video-encode');
+        app.commandLine.appendSwitch('enable-features', 'PlatformHEVCEncoderSupport');
+    }
+}
+
+configureHardwareAcceleration();
 
 const ipcLog = (channel: string, direction: 'IN' | 'OUT', data?: any, error?: any) => {
     if (!LOG_IPC) return;
@@ -58,6 +84,7 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            backgroundThrottling: false,  // Critical for media apps
         },
         show: false,
         titleBarStyle: 'hidden',
@@ -73,6 +100,22 @@ function createWindow() {
 
     mainWindow.once('ready-to-show', () => mainWindow?.show());
     mainWindow.on('closed', () => { mainWindow = null; });
+
+    mainWindow.webContents.on('render-process-gone', (_e, details) => {
+        console.error('[Main] RENDERER GONE:', details); // reason, exitCode, etc
+    });
+
+    mainWindow.webContents.on('unresponsive', () => {
+        console.error('[Main] Renderer unresponsive');
+    });
+
+    process.on('uncaughtException', (err) => {
+        console.error('[Main] uncaughtException:', err);
+    });
+    process.on('unhandledRejection', (err) => {
+        console.error('[Main] unhandledRejection:', err);
+    });
+
 }
 
 function assertClient(): ConcordClient {
@@ -149,9 +192,89 @@ function handleIpc<T>(channel: string, handler: IpcHandler<T>): void {
     });
 }
 
+function setupVoiceClientListeners() {
+    if (!voiceClient) return;
+
+    voiceClient.on('speaking', (data) => {
+        mainWindow?.webContents.send('voice:speaking', data);
+    });
+
+    voiceClient.on('participant-joined', (data) => {
+        console.log('[Main] Voice participant joined:', data);
+        mainWindow?.webContents.send('voice:participant-joined', data);
+    });
+
+    voiceClient.on("participant-left", (data) => {
+        mainWindow?.webContents.send("voice:participant-left", data);
+    });
+
+    voiceClient.on('media-state', (data) => {
+        mainWindow?.webContents.send('voice:media-state', data);
+    });
+
+    voiceClient.on('local-speaking', (speaking) => {
+        mainWindow?.webContents.send('voice:local-speaking', speaking);
+    });
+
+    voiceClient.on('decrypt-error', (data) => {
+        console.error('[Main] Decrypt error:', data);
+    });
+
+    voiceClient.on('error', (err) => {
+        console.error('[Main] Voice error:', err);
+        mainWindow?.webContents.send('voice:error', err.message || String(err));
+    });
+
+    voiceClient.on('reconnected', () => {
+        console.log('[Main] Voice reconnected');
+        mainWindow?.webContents.send('voice:reconnected');
+    });
+
+    voiceClient.on('disconnect', () => {
+        console.log('[Main] Voice disconnected');
+        mainWindow?.webContents.send('voice:disconnected');
+    });
+
+    voiceClient.on('audio', (data) => {
+        mainWindow?.webContents.send('voice:audio', {
+            ssrc: data.ssrc,
+            sequence: data.sequence,
+            timestamp: data.timestamp,
+            pts: data.pts,
+            data: data.data, // Buffer is fine
+        });
+    });
+
+    voiceClient.on('video', (data) => {
+        mainWindow?.webContents.send('voice:video', {
+            ssrc: data.ssrc,
+            sequence: data.sequence,
+            timestamp: data.timestamp,
+            pts: data.pts,
+            isKeyframe: data.isKeyframe,
+            data: data.data, // Buffer
+        });
+    });
+
+
+    voiceClient.on('rtt', (rtt) => {
+        mainWindow?.webContents.send('voice:rtt', rtt);
+    });
+}
+
 function setupIPC() {
     handleIpc('app:getDefaultServerAddress', async () => {
         return process.env.CONCORD_SERVER || 'localhost:9090';
+    });
+
+    handleIpc('app:getGPUInfo', async () => {
+        const gpuInfo = (await app.getGPUInfo('complete')) as any;
+
+        return {
+            vendor: gpuInfo?.gpuDevice?.[0]?.vendorId ?? null,
+            device: gpuInfo?.gpuDevice?.[0]?.deviceId ?? null,
+            driver: gpuInfo?.gpuDevice?.[0]?.driverVersion ?? null,
+        };
     });
 
     handleIpc('client:initialize', async (_e, { accessToken, serverAddress, refreshToken, expiresIn }) => {
@@ -185,6 +308,18 @@ function setupIPC() {
         return tokens;
     });
 
+    handleIpc('auth:loginOAuth', async (_e, { provider, code, redirectUri }) => {
+        const c = assertClient();
+        const tokens = await c.loginOAuth(provider, code, redirectUri) as any;
+        c.setTokens(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+        if (!streamInitialized) setTimeout(startEventStream, 500);
+        return tokens;
+    });
+
+    handleIpc('auth:oauthBegin', async (_e, { provider, redirectUri }) => {
+        return assertClient().oauthBegin(provider, redirectUri);
+    });
+
     handleIpc('auth:refresh', async (_e, { refreshToken }) => {
         const c = assertClient();
         const tokens = await c.refreshToken(refreshToken) as any;
@@ -202,8 +337,17 @@ function setupIPC() {
     });
 
     // Users
-    handleIpc('users:getSelf', async () => assertClient().getSelf());
-    handleIpc('users:getUser', async (_e, { userId }) => assertClient().getUser(userId));
+    handleIpc('users:getSelf', async () => {
+        const user = await assertClient().getSelf() as any;
+        currentUserId = user?.id;
+        return user;
+    });
+    handleIpc('users:getUser', async (_e, { userId }) => {
+        if (!userId || typeof userId !== 'string') {
+            throw new Error('users:getUser: userId is required');
+        }
+        return assertClient().getUser(userId);
+    });
     handleIpc('users:getByHandle', async (_e, { handle }) => assertClient().getUserByHandle(handle));
     handleIpc('users:search', async (_e, { query, limit }) => assertClient().searchUsers(query, limit));
     handleIpc('users:listByIds', async (_e, { userIds }) => assertClient().listUsersByIds(userIds));
@@ -220,9 +364,15 @@ function setupIPC() {
         assertClient().updateRoom(roomId, name, description, isPrivate));
     handleIpc('rooms:delete', async (_e, { roomId }) => assertClient().deleteRoom(roomId));
     handleIpc('rooms:getMembers', async (_e, { roomId }) => assertClient().getMembers(roomId));
+    handleIpc('rooms:attachVoiceServer', async (_e, { roomId, voiceServerId }) =>
+        assertClient().attachVoiceServer(roomId, voiceServerId));
 
     // Membership
     handleIpc('membership:invite', async (_e, { roomId, userId }) => assertClient().inviteMember(roomId, userId));
+    handleIpc('membership:acceptInvite', async (_e, { inviteId }) => assertClient().acceptRoomInvite(inviteId));
+    handleIpc('membership:rejectInvite', async (_e, { inviteId }) => assertClient().rejectRoomInvite(inviteId));
+    handleIpc('membership:cancelInvite', async (_e, { inviteId }) => assertClient().cancelRoomInvite(inviteId));
+    handleIpc('membership:listInvites', async () => assertClient().listRoomInvites());
     handleIpc('membership:remove', async (_e, { roomId, userId }) => assertClient().removeMember(roomId, userId));
     handleIpc('membership:setRole', async (_e, { roomId, userId, role }) =>
         assertClient().setMemberRole(roomId, userId, role));
@@ -265,55 +415,228 @@ function setupIPC() {
         return { success: true };
     });
 
-    // Voice
-    handleIpc('voice:join', async (_e, { roomId, audioOnly }) => {
-        const response = await assertClient().joinVoice(roomId, audioOnly) as any;
-
-        const config: VoiceConfig = {
-            endpoint: response.endpoint,
-            serverId: response.server_id,
-            voiceToken: response.voice_token,
-            codec: response.codec,
-            crypto: response.crypto,
-            participants: response.participants || [],
-        };
-
-        voiceClient = new VoiceClient(config);
-        voiceClient.on('speaking', (data) => {
-            streamLog('VOICE:speaking', data);
-            mainWindow?.webContents.send('voice:speaking', data);
+    handleIpc('screen:getSources', async () => {
+        const { desktopCapturer } = require('electron');
+        const sources = await desktopCapturer.getSources({
+            types: ['window', 'screen'],
+            thumbnailSize: { width: 150, height: 150 }
         });
-        voiceClient.on('error', (err) => {
-            streamLog('VOICE:error', err.message);
-            mainWindow?.webContents.send('voice:error', err.message);
-        });
-        voiceClient.on('reconnected', () => {
-            streamLog('VOICE:reconnected');
-            mainWindow?.webContents.send('voice:reconnected');
-        });
-
-        await voiceClient.connect();
-        currentVoiceRoomId = roomId;
-
-        return { success: true, participantCount: response.participants?.length || 0 };
+        return sources.map((source: Electron.DesktopCapturerSource) => ({
+            id: source.id,
+            name: source.name,
+            thumbnail: source.thumbnail.toDataURL()
+        }));
     });
 
-    handleIpc('voice:leave', async (_e, { roomId }) => {
+    // Voice
+    handleIpc("voice:join", async (_e, { roomId, audioOnly }) => {
+        if (!currentUserId) {
+            const self = (await assertClient().getSelf()) as any;
+            currentUserId = self?.id;
+        }
+        if (!currentUserId) throw new Error("User ID not available");
+
+        const joinKey = `${roomId}:${audioOnly ? 1 : 0}`;
+
+        if (voiceClient && voiceClient.isConnected() && currentVoiceRoomId === roomId && currentVoiceAudioOnly === !!audioOnly) {
+            const welcomeParticipants = voiceClient.getParticipants();
+            return {
+                success: true,
+                ssrc: voiceClient.getSSRC(),
+                videoSsrc: voiceClient.getVideoSSRC(),
+                sessionId: voiceClient.getSessionId(),
+                participants: welcomeParticipants,
+                participantCount: welcomeParticipants.length,
+            };
+        }
+
+        if (voiceJoinPromise && voiceJoinKey === joinKey) {
+            return await voiceJoinPromise;
+        }
+
+        voiceJoinKey = joinKey;
+
+        voiceJoinPromise = (async () => {
+            if (voiceClient) {
+                if (voiceClient.isConnected()) {
+                    voiceClient.disconnect();
+                }
+                voiceClient.removeAllListeners();
+                voiceClient = null;
+            }
+
+            if (currentVoiceRoomId && currentVoiceRoomId !== roomId) {
+                try {
+                    await assertClient().leaveVoice(currentVoiceRoomId);
+                } catch {}
+            }
+
+            const response = (await assertClient().joinVoice(roomId, !!audioOnly)) as any;
+
+            const toUint8Array = (data: any): Uint8Array => {
+                if (data instanceof Uint8Array) return data;
+                if (Buffer.isBuffer(data)) return new Uint8Array(data);
+                if (Array.isArray(data)) return new Uint8Array(data);
+                if (typeof data === "string") {
+                    try {
+                        return new Uint8Array(Buffer.from(data, "base64"));
+                    } catch {
+                        return new Uint8Array(Buffer.from(data));
+                    }
+                }
+                if (data && typeof data === "object") {
+                    if (data.type === "Buffer" && Array.isArray(data.data)) return new Uint8Array(data.data);
+                    const values = Object.values(data);
+                    if (values.every((v) => typeof v === "number")) return new Uint8Array(values as number[]);
+                }
+                return new Uint8Array(0);
+            };
+
+            const keyIdBytes = toUint8Array(response.crypto?.key_id ?? response.crypto?.keyId);
+            const keyId = keyIdBytes.length ? keyIdBytes[0] : (typeof response.crypto?.key_id === "number" ? response.crypto.key_id : 0);
+
+            const keyMaterial = toUint8Array(response.crypto?.key_material ?? response.crypto?.keyMaterial);
+
+            let endpointHost = response.endpoint?.host || "localhost";
+            let endpointPort = response.endpoint?.port || 7885;
+
+            if (endpointHost.includes(':')) {
+                const parts = endpointHost.split(':');
+                endpointHost = parts[0];
+                if (parts[1] && !response.endpoint?.port) {
+                    endpointPort = parseInt(parts[1], 10);
+                }
+            }
+
+            const config: VoiceConfig = {
+                endpoint: {
+                    host: endpointHost,
+                    port: endpointPort,
+                },
+                serverId: response.server_id || "",
+                voiceToken: response.voice_token || "",
+                roomId,
+                userId: currentUserId,
+                codec: {
+                    audio: response.codec?.audio || "opus",
+                    video: audioOnly ? undefined : (response.codec?.video || "h264"),
+                },
+                crypto: {
+                    aead: "aes-256-gcm",
+                    keyId,
+                    keyMaterial,
+                },
+                participants: [],
+            };
+
+            voiceClient = new VoiceClient(config);
+            setupVoiceClientListeners();
+
+            await voiceClient.connect();
+
+            currentVoiceRoomId = roomId;
+            currentVoiceAudioOnly = !!audioOnly;
+
+            const welcomeParticipants = voiceClient.getParticipants();
+
+            return {
+                success: true,
+                ssrc: voiceClient.getSSRC(),
+                videoSsrc: voiceClient.getVideoSSRC(),
+                sessionId: voiceClient.getSessionId(),
+                participants: welcomeParticipants,
+                participantCount: welcomeParticipants.length,
+            };
+        })();
+
+        try {
+            return await voiceJoinPromise;
+        } finally {
+            voiceJoinPromise = null;
+            voiceJoinKey = null;
+        }
+    });
+
+    handleIpc("voice:leave", async (_e, { roomId }) => {
+        const targetRoom = roomId || currentVoiceRoomId;
+
         if (voiceClient) {
             voiceClient.disconnect();
+            voiceClient.removeAllListeners();
             voiceClient = null;
         }
-        if (roomId || currentVoiceRoomId) {
-            await assertClient().leaveVoice(roomId || currentVoiceRoomId!);
+
+        if (targetRoom) {
+            try {
+                await assertClient().leaveVoice(targetRoom);
+            } catch {}
         }
+
         currentVoiceRoomId = null;
+        currentVoiceAudioOnly = null;
+
         return { success: true };
     });
 
-    handleIpc('voice:setMediaPrefs', async (_e, { roomId, audioOnly, videoEnabled, muted }) =>
-        assertClient().setMediaPrefs(roomId, audioOnly, videoEnabled, muted));
+    ipcMain.on('voice:sendAudio', (_e, data: Uint8Array) => {
+        if (!voiceClient || !voiceClient.isConnected()) return;
+        voiceClient.sendAudio(Buffer.from(data));
+    });
+
+
+    ipcMain.on(
+        'voice:sendVideo',
+        (_e, payload: { data: Uint8Array | ArrayBuffer; isKeyframe?: boolean }) => {
+            if (!voiceClient || !voiceClient.isConnected()) return;
+
+            const u8 =
+                payload.data instanceof ArrayBuffer
+                    ? new Uint8Array(payload.data)
+                    : payload.data;
+
+            voiceClient.sendVideo(Buffer.from(u8), !!payload.isKeyframe);
+        }
+    );
+
+    handleIpc('voice:setSpeaking', async (_e, { speaking }) => {
+        if (voiceClient?.isConnected()) {
+            voiceClient.setSpeaking(speaking);
+        }
+        return { success: true };
+    });
 
     handleIpc('voice:getStatus', async (_e, { roomId }) => assertClient().getVoiceStatus(roomId));
+
+    handleIpc('voice:isConnected', async () => {
+        return { connected: voiceClient?.isConnected() ?? false };
+    });
+
+    handleIpc('voice:getParticipants', async () => {
+        if (!voiceClient || !currentVoiceRoomId) {
+            return { participants: [] };
+        }
+        try {
+            const status = await assertClient().getVoiceStatus(currentVoiceRoomId) as any;
+            return { participants: status?.participants || [] };
+        } catch (err) {
+            console.error('[Main] Failed to get voice participants:', err);
+            return { participants: [] };
+        }
+    });
+
+    handleIpc('voice:setMediaState', async (_e, { muted, videoEnabled }) => {
+        if (voiceClient?.isConnected()) {
+            voiceClient.setMediaState(muted, videoEnabled);
+        }
+        return { success: true };
+    });
+
+    handleIpc('voice:setMediaPrefs', async (_e, { roomId, audioOnly, videoEnabled, muted }) => {
+        if (voiceClient?.isConnected()) {
+            voiceClient.setMediaState(muted, videoEnabled);
+        }
+        return assertClient().setMediaPrefs(roomId, audioOnly, videoEnabled, muted);
+    });
 
     // Friends
     handleIpc('friends:sendRequest', async (_e, { userId }) => assertClient().sendFriendRequest(userId));
@@ -333,6 +656,22 @@ function setupIPC() {
         assertClient().banUser(roomId, userId, durationSeconds));
     handleIpc('admin:mute', async (_e, { roomId, userId, muted }) =>
         assertClient().muteUser(roomId, userId, muted));
+
+    // DM
+    handleIpc('dm:getOrCreate', async (_e, { userId }) => assertClient().getOrCreateDM(userId));
+    handleIpc('dm:list', async () => assertClient().listDMs());
+    handleIpc('dm:close', async (_e, { channelId }) => assertClient().closeDM(channelId));
+    handleIpc('dm:sendMessage', async (_e, { channelId, content, attachments }) =>
+        assertClient().sendDMMessage(channelId, content, attachments));
+    handleIpc('dm:listMessages', async (_e, { channelId, limit, beforeId }) =>
+        assertClient().listDMMessages(channelId, limit, beforeId));
+    handleIpc('dm:startCall', async (_e, { channelId, audioOnly }) =>
+        assertClient().startDMCall(channelId, audioOnly));
+    handleIpc('dm:joinCall', async (_e, { channelId, audioOnly }) =>
+        assertClient().joinDMCall(channelId, audioOnly));
+    handleIpc('dm:leaveCall', async (_e, { channelId }) => assertClient().leaveDMCall(channelId));
+    handleIpc('dm:endCall', async (_e, { channelId }) => assertClient().endDMCall(channelId));
+    handleIpc('dm:callStatus', async (_e, { channelId }) => assertClient().getDMCallStatus(channelId));
 
     console.log('\x1b[33m[IPC] All handlers registered\x1b[0m');
 }
@@ -354,6 +693,10 @@ app.on('before-quit', () => {
     console.log('\x1b[33m[APP] Shutting down...\x1b[0m');
     if (keepaliveInterval) clearInterval(keepaliveInterval);
     if (currentStream) { currentStream.end(); currentStream = null; }
-    if (voiceClient) voiceClient.disconnect();
+    if (voiceClient) {
+        voiceClient.disconnect();
+        voiceClient.removeAllListeners();
+        voiceClient = null;
+    }
     streamInitialized = false;
 });

@@ -19,6 +19,7 @@ class ConcordClient {
     private tokenExpiresAt?: number;
     private serverAddress: string;
     private isRefreshing = false;
+    private dmClient: any;
 
     constructor(serverAddress: string) {
         this.serverAddress = serverAddress;
@@ -36,6 +37,7 @@ class ConcordClient {
                 path.join(PROTO_PATH, 'call/v1/call.proto'),
                 path.join(PROTO_PATH, 'membership/v1/membership.proto'),
                 path.join(PROTO_PATH, 'friends/v1/friends.proto'),
+                path.join(PROTO_PATH, 'dm/v1/dm.proto'),
                 path.join(PROTO_PATH, 'admin/v1/admin.proto'),
             ],
             {
@@ -60,6 +62,7 @@ class ConcordClient {
         this.membershipClient = new protoDescriptor.concord.membership.v1.MembershipService(this.serverAddress, credentials);
         this.friendsClient = new protoDescriptor.concord.friends.v1.FriendsService(this.serverAddress, credentials);
         this.adminClient = new protoDescriptor.concord.admin.v1.AdminService(this.serverAddress, credentials);
+        this.dmClient = new protoDescriptor.concord.dm.v1.DMService(this.serverAddress, credentials);
     }
 
     setTokens(access: string, refresh?: string, expiresIn?: number) {
@@ -135,6 +138,14 @@ class ConcordClient {
         return this.promisify(this.authClient, 'LoginPassword', { handle, password });
     }
 
+    async loginOAuth(provider: string, code: string, redirectUri: string) {
+        return this.promisify(this.authClient, 'LoginOAuth', { provider, code, redirect_uri: redirectUri });
+    }
+
+    async oauthBegin(provider: string, redirectUri: string) {
+        return this.promisify(this.authClient, 'OAuthBegin', { provider, redirect_uri: redirectUri });
+    }
+
     async refreshToken(refreshToken: string) {
         return this.promisify(this.authClient, 'Refresh', { refresh_token: refreshToken });
     }
@@ -193,6 +204,10 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.roomsClient, 'DeleteRoom', { room_id: roomId }, true));
     }
 
+    async attachVoiceServer(roomId: string, voiceServerId: string) {
+        return this.withAuth(() => this.promisify(this.roomsClient, 'AttachVoiceServer', { room_id: roomId, voice_server_id: voiceServerId }, true));
+    }
+
     // Membership
     async getMembers(roomId: string) {
         return this.withAuth(() => this.promisify(this.membershipClient, 'ListMembers', { room_id: roomId }, true));
@@ -200,6 +215,22 @@ class ConcordClient {
 
     async inviteMember(roomId: string, userId: string) {
         return this.withAuth(() => this.promisify(this.membershipClient, 'Invite', { room_id: roomId, user_id: userId }, true));
+    }
+
+    async acceptRoomInvite(inviteId: string) {
+        return this.withAuth(() => this.promisify(this.membershipClient, 'AcceptRoomInvite', { invite_id: inviteId }, true));
+    }
+
+    async rejectRoomInvite(inviteId: string) {
+        return this.withAuth(() => this.promisify(this.membershipClient, 'RejectRoomInvite', { invite_id: inviteId }, true));
+    }
+
+    async cancelRoomInvite(inviteId: string) {
+        return this.withAuth(() => this.promisify(this.membershipClient, 'CancelRoomInvite', { invite_id: inviteId }, true));
+    }
+
+    async listRoomInvites() {
+        return this.withAuth(() => this.promisify(this.membershipClient, 'ListRoomInvites', {}, true));
     }
 
     async removeMember(roomId: string, userId: string) {
@@ -345,6 +376,61 @@ class ConcordClient {
 
     async muteUser(roomId: string, userId: string, muted: boolean) {
         return this.withAuth(() => this.promisify(this.adminClient, 'Mute', { room_id: roomId, user_id: userId, muted }, true));
+    }
+
+    // DM
+    async getOrCreateDM(userId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'GetOrCreateDM', { user_id: userId }, true));
+    }
+
+    async listDMs() {
+        return this.withAuth(() => this.promisify(this.dmClient, 'ListDMs', {}, true));
+    }
+
+    async closeDM(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'CloseDM', { channel_id: channelId }, true));
+    }
+
+    async sendDMMessage(channelId: string, content: string, attachments?: any[]) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'SendDMMessage', {
+            channel_id: channelId,
+            content,
+            attachments
+        }, true));
+    }
+
+    async listDMMessages(channelId: string, limit = 50, beforeId?: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'ListDMMessages', {
+            channel_id: channelId,
+            limit,
+            before_id: beforeId
+        }, true));
+    }
+
+    async startDMCall(channelId: string, audioOnly = false) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'StartDMCall', {
+            channel_id: channelId,
+            audio_only: audioOnly
+        }, true));
+    }
+
+    async joinDMCall(channelId: string, audioOnly = false) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'JoinDMCall', {
+            channel_id: channelId,
+            audio_only: audioOnly
+        }, true));
+    }
+
+    async leaveDMCall(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'LeaveDMCall', { channel_id: channelId }, true));
+    }
+
+    async endDMCall(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'EndDMCall', { channel_id: channelId }, true));
+    }
+
+    async getDMCallStatus(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'GetDMCallStatus', { channel_id: channelId }, true));
     }
 }
 

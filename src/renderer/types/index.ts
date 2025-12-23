@@ -107,8 +107,12 @@ export interface Friend {
 
 export interface VoiceParticipant {
     userId: string;
+    audioSsrc: number;
+    videoSsrc: number;
     muted: boolean;
     videoEnabled: boolean;
     speaking: boolean;
     joinedAt: string;
+    displayName?: string;
+    avatarUrl?: string;
 }

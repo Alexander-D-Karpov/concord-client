@@ -91,6 +91,13 @@ const Home: React.FC = () => {
         };
 
         window.addEventListener('keydown', handleKeyPress);
+
+        window.addEventListener('error', (e) => {
+            console.error('[Renderer] error:', e.error || e.message);
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('[Renderer] unhandledrejection:', e.reason);
+        });
         return () => window.removeEventListener('keydown', handleKeyPress);
     }, [showSidebar, showMemberList]);
 

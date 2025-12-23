@@ -6,12 +6,17 @@ contextBridge.exposeInMainWorld('concord', {
     getDefaultServerAddress: () => invoke('app:getDefaultServerAddress'),
     initializeClient: (accessToken: string, serverAddress?: string, refreshToken?: string, expiresIn?: number) =>
         invoke('client:initialize', { accessToken, serverAddress, refreshToken, expiresIn }),
+    getGPUInfo: () => invoke('app:getGPUInfo'),
 
     // Auth
     register: (handle: string, password: string, displayName: string, serverAddress?: string) =>
         invoke('auth:register', { handle, password, displayName, serverAddress }),
     login: (handle: string, password: string, serverAddress?: string) =>
         invoke('auth:login', { handle, password, serverAddress }),
+    loginOAuth: (provider: string, code: string, redirectUri: string) =>
+        invoke('auth:loginOAuth', { provider, code, redirectUri }),
+    oauthBegin: (provider: string, redirectUri: string) =>
+        invoke('auth:oauthBegin', { provider, redirectUri }),
     refreshToken: (refreshToken: string) => invoke('auth:refresh', { refreshToken }),
     logout: (refreshToken: string) => invoke('auth:logout', { refreshToken }),
     checkAuthStatus: () => invoke('auth:checkStatus'),
@@ -34,10 +39,16 @@ contextBridge.exposeInMainWorld('concord', {
     updateRoom: (roomId: string, name?: string, description?: string, isPrivate?: boolean) =>
         invoke('rooms:update', { roomId, name, description, isPrivate }),
     deleteRoom: (roomId: string) => invoke('rooms:delete', { roomId }),
+    attachVoiceServer: (roomId: string, voiceServerId: string) =>
+        invoke('rooms:attachVoiceServer', { roomId, voiceServerId }),
 
     // Membership
     getMembers: (roomId: string) => invoke('rooms:getMembers', { roomId }),
     inviteMember: (roomId: string, userId: string) => invoke('membership:invite', { roomId, userId }),
+    acceptRoomInvite: (inviteId: string) => invoke('membership:acceptInvite', { inviteId }),
+    rejectRoomInvite: (inviteId: string) => invoke('membership:rejectInvite', { inviteId }),
+    cancelRoomInvite: (inviteId: string) => invoke('membership:cancelInvite', { inviteId }),
+    listRoomInvites: () => invoke('membership:listInvites'),
     removeMember: (roomId: string, userId: string) => invoke('membership:remove', { roomId, userId }),
     setMemberRole: (roomId: string, userId: string, role: string) =>
         invoke('membership:setRole', { roomId, userId, role }),
@@ -86,15 +97,85 @@ contextBridge.exposeInMainWorld('concord', {
     setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean) =>
         invoke('voice:setMediaPrefs', { roomId, audioOnly, videoEnabled, muted }),
     getVoiceStatus: (roomId: string) => invoke('voice:getStatus', { roomId }),
+    getVoiceParticipants: () => invoke('voice:getParticipants'),
+    sendVoiceAudio: (data: ArrayBuffer) => {
+        ipcRenderer.send('voice:sendAudio', new Uint8Array(data));
+        return Promise.resolve({ success: true });
+    },
+    sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean) => {
+        ipcRenderer.send('voice:sendVideo', { data: new Uint8Array(data), isKeyframe });
+        return Promise.resolve({ success: true });
+    },
+    setVoiceSpeaking: (speaking: boolean) => invoke('voice:setSpeaking', { speaking }),
+    isVoiceConnected: () => invoke('voice:isConnected'),
+    onVoiceParticipantLeft: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:participant-left', handler);
+        return () => ipcRenderer.removeListener('voice:participant-left', handler);
+    },
+
+    onVoiceMediaState: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:media-state', handler);
+        return () => ipcRenderer.removeListener('voice:media-state', handler);
+    },
+
+    setVoiceMediaState: (muted: boolean, videoEnabled: boolean) =>
+        invoke('voice:setMediaState', { muted, videoEnabled }),
+
+    // Voice events
     onVoiceSpeaking: (cb: (data: any) => void) => {
-        ipcRenderer.on('voice:speaking', (_e, data) => cb(data));
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:speaking', handler);
+        return () => ipcRenderer.removeListener('voice:speaking', handler);
+    },
+    onVoiceParticipantJoined: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:participant-joined', handler);
+        return () => ipcRenderer.removeListener('voice:participant-joined', handler);
     },
     onVoiceError: (cb: (error: string) => void) => {
-        ipcRenderer.on('voice:error', (_e, error) => cb(error));
+        const handler = (_e: any, error: string) => cb(error);
+        ipcRenderer.on('voice:error', handler);
+        return () => ipcRenderer.removeListener('voice:error', handler);
     },
     onVoiceReconnected: (cb: () => void) => {
-        ipcRenderer.on('voice:reconnected', cb);
+        const handler = () => cb();
+        ipcRenderer.on('voice:reconnected', handler);
+        return () => ipcRenderer.removeListener('voice:reconnected', handler);
     },
+    onVoiceDisconnected: (cb: () => void) => {
+        const handler = () => cb();
+        ipcRenderer.on('voice:disconnected', handler);
+        return () => ipcRenderer.removeListener('voice:disconnected', handler);
+    },
+    onVoiceAudio: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:audio', handler);
+        return () => ipcRenderer.removeListener('voice:audio', handler);
+    },
+    onVoiceVideo: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:video', handler);
+        return () => ipcRenderer.removeListener('voice:video', handler);
+    },
+    onVoiceSyncDrift: (cb: (drift: number) => void) => {
+        const handler = (_e: any, drift: number) => cb(drift);
+        ipcRenderer.on('voice:sync-drift', handler);
+        return () => ipcRenderer.removeListener('voice:sync-drift', handler);
+    },
+    onVoiceRTT: (cb: (rtt: number) => void) => {
+        const handler = (_e: any, rtt: number) => cb(rtt);
+        ipcRenderer.on('voice:rtt', handler);
+        return () => ipcRenderer.removeListener('voice:rtt', handler);
+    },
+    onLocalSpeaking: (cb: (speaking: boolean) => void) => {
+        const handler = (_e: any, speaking: boolean) => cb(speaking);
+        ipcRenderer.on('voice:local-speaking', handler);
+        return () => ipcRenderer.removeListener('voice:local-speaking', handler);
+    },
+
+    getScreenSources: () => invoke('screen:getSources'),
 
     // Friends
     sendFriendRequest: (userId: string) => invoke('friends:sendRequest', { userId }),
@@ -121,4 +202,20 @@ contextBridge.exposeInMainWorld('concord', {
         ipcRenderer.on('auth:expired', handler);
         return () => ipcRenderer.removeListener('auth:expired', handler);
     },
+
+    // DM
+    getOrCreateDM: (userId: string) => invoke('dm:getOrCreate', { userId }),
+    listDMs: () => invoke('dm:list'),
+    closeDM: (channelId: string) => invoke('dm:close', { channelId }),
+    sendDMMessage: (channelId: string, content: string, attachments?: any[]) =>
+        invoke('dm:sendMessage', { channelId, content, attachments }),
+    listDMMessages: (channelId: string, limit?: number, beforeId?: string) =>
+        invoke('dm:listMessages', { channelId, limit, beforeId }),
+    startDMCall: (channelId: string, audioOnly?: boolean) =>
+        invoke('dm:startCall', { channelId, audioOnly }),
+    joinDMCall: (channelId: string, audioOnly?: boolean) =>
+        invoke('dm:joinCall', { channelId, audioOnly }),
+    leaveDMCall: (channelId: string) => invoke('dm:leaveCall', { channelId }),
+    endDMCall: (channelId: string) => invoke('dm:endCall', { channelId }),
+    getDMCallStatus: (channelId: string) => invoke('dm:callStatus', { channelId }),
 });

@@ -9,6 +9,8 @@ declare global {
             // Auth
             register(handle: string, password: string, displayName: string, serverAddress?: string): Promise<any>;
             login(handle: string, password: string, serverAddress?: string): Promise<any>;
+            loginOAuth(provider: string, code: string, redirectUri: string): Promise<any>;
+            oauthBegin(provider: string, redirectUri: string): Promise<{ auth_url: string; state: string }>;
             refreshToken(refreshToken: string): Promise<any>;
             logout(refreshToken: string): Promise<any>;
             checkAuthStatus(): Promise<{ authenticated: boolean }>;
@@ -28,10 +30,15 @@ declare global {
             createRoom(name: string, region?: string, description?: string, isPrivate?: boolean): Promise<any>;
             updateRoom(roomId: string, name?: string, description?: string, isPrivate?: boolean): Promise<any>;
             deleteRoom(roomId: string): Promise<any>;
+            attachVoiceServer(roomId: string, voiceServerId: string): Promise<any>;
 
             // Membership
             getMembers(roomId: string): Promise<{ members: any[] }>;
             inviteMember(roomId: string, userId: string): Promise<any>;
+            acceptRoomInvite(inviteId: string): Promise<any>;
+            rejectRoomInvite(inviteId: string): Promise<any>;
+            cancelRoomInvite(inviteId: string): Promise<any>;
+            listRoomInvites(): Promise<{ incoming: any[]; outgoing: any[] }>;
             removeMember(roomId: string, userId: string): Promise<any>;
             setMemberRole(roomId: string, userId: string, role: string): Promise<any>;
             setMemberNickname(roomId: string, nickname: string): Promise<any>;
@@ -57,13 +64,29 @@ declare global {
             onStreamEnd(cb: () => void): () => void;
 
             // Voice
-            joinVoice(roomId: string, audioOnly?: boolean): Promise<{ success: boolean; participantCount: number; participants?: any[] }>;
-            leaveVoice(roomId: string): Promise<{ success: boolean }>;
-            setMediaPrefs(roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean): Promise<any>;
-            getVoiceStatus(roomId: string): Promise<{ participants: any[]; total_participants: number }>;
-            onVoiceSpeaking(cb: (data: any) => void): void;
-            onVoiceError(cb: (error: string) => void): void;
-            onVoiceReconnected(cb: () => void): void;
+            joinVoice: (roomId: string, audioOnly?: boolean) => Promise<any>;
+            leaveVoice: (roomId: string) => Promise<any>;
+            setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean) => Promise<any>;
+            getVoiceStatus: (roomId: string) => Promise<any>;
+            getVoiceParticipants: () => Promise<{ participants: any[] }>;
+            sendVoiceAudio: (data: ArrayBuffer) => Promise<any>;
+            sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean) => Promise<any>;
+            setVoiceSpeaking: (speaking: boolean) => Promise<any>;
+            isVoiceConnected: () => Promise<{ connected: boolean }>;
+
+            // Voice events
+            onVoiceSpeaking?: (cb: (data: any) => void) => () => void;
+            onVoiceParticipantJoined?: (cb: (data: any) => void) => () => void;
+            onVoiceError?: (cb: (error: string) => void) => () => void;
+            onVoiceReconnected?: (cb: () => void) => () => void;
+            onVoiceDisconnected?: (cb: () => void) => () => void;
+            onVoiceAudio?: (cb: (data: any) => void) => () => void;
+            onVoiceVideo?: (cb: (data: any) => void) => () => void;
+            onVoiceSyncDrift?: (cb: (drift: number) => void) => () => void;
+            onVoiceRTT?: (cb: (rtt: number) => void) => () => void;
+            onLocalSpeaking?: (cb: (speaking: boolean) => void) => () => void;
+            onVoiceMediaState?: (cb: (data: any) => void) => () => void;
+            setVoiceMediaState: (muted: boolean, videoEnabled: boolean) => Promise<any>;
 
             // Friends
             sendFriendRequest(userId: string): Promise<any>;
@@ -84,6 +107,18 @@ declare global {
 
             // Auth events
             onAuthExpired(cb: () => void): () => void;
+
+            // DM
+            getOrCreateDM(userId: string): Promise<any>;
+            listDMs(): Promise<any>;
+            closeDM(channelId: string): Promise<any>;
+            sendDMMessage(channelId: string, content: string, attachments?: any[]): Promise<any>;
+            listDMMessages(channelId: string, limit?: number, beforeId?: string): Promise<any>;
+            startDMCall(channelId: string, audioOnly?: boolean): Promise<any>;
+            joinDMCall(channelId: string, audioOnly?: boolean): Promise<any>;
+            leaveDMCall(channelId: string): Promise<any>;
+            endDMCall(channelId: string): Promise<any>;
+            getDMCallStatus(channelId: string): Promise<any>;
         };
     }
 }

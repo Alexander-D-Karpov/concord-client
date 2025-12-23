@@ -86,18 +86,8 @@ export const useEventStream = () => {
     }, [setMembers]);
 
     const handleEvent = useCallback((raw: any) => {
-        // raw is the full ServerEvent from gRPC:
-        // {
-        //   event_id: string,
-        //   created_at: {...},
-        //   message_created?: {...},
-        //   message_edited?: {...},
-        //   ...
-        //   payload?: "message_created" | "message_edited" | ...
-        // }
         if (!raw) return;
 
-        // Ignore raw.payload – it's just the oneof selector string.
         const p = raw;
 
         // Message events
@@ -175,8 +165,9 @@ export const useEventStream = () => {
             return;
         }
 
-        // Voice events
+        // Voice events - dispatch as CustomEvents for useVoiceClient to handle
         if (p.voice_state_changed) {
+            console.log('[EventStream] Voice state changed:', p.voice_state_changed);
             window.dispatchEvent(
                 new CustomEvent('voice-state-changed', { detail: p.voice_state_changed })
             );
@@ -184,6 +175,7 @@ export const useEventStream = () => {
         }
 
         if (p.voice_user_joined) {
+            console.log('[EventStream] Voice user joined:', p.voice_user_joined);
             window.dispatchEvent(
                 new CustomEvent('voice-user-joined', { detail: p.voice_user_joined })
             );
@@ -191,6 +183,7 @@ export const useEventStream = () => {
         }
 
         if (p.voice_user_left) {
+            console.log('[EventStream] Voice user left:', p.voice_user_left);
             window.dispatchEvent(
                 new CustomEvent('voice-user-left', { detail: p.voice_user_left })
             );
@@ -204,11 +197,40 @@ export const useEventStream = () => {
             return;
         }
 
+        if (p.profile_updated) {
+            const { user_id, display_name, avatar_url, status, bio } = p.profile_updated;
+            setUser({
+                id: user_id,
+                displayName: display_name,
+                avatarUrl: avatar_url,
+                status,
+                bio,
+            } as any);
+            return;
+        }
+
         // Friend events
         if (p.friend_request_created || p.friend_request_updated) {
             loadPendingRequests();
             loadFriends();
             return;
+        }
+
+        if (p.friend_removed) {
+            loadFriends();
+            return;
+        }
+
+        // Room invite events
+        if (p.room_invite_received || p.room_invite_created || p.room_invite_updated) {
+            // Could trigger a refresh of room invites if we had that in a store
+            return;
+        }
+
+        // Log unhandled events for debugging
+        const eventKeys = Object.keys(p).filter(k => !['event_id', 'created_at', 'payload'].includes(k));
+        if (eventKeys.length > 0) {
+            console.log('[EventStream] Unhandled event keys:', eventKeys);
         }
     }, [
         addMessage,
@@ -225,11 +247,18 @@ export const useEventStream = () => {
     ]);
 
     useEffect(() => {
+        console.log('[EventStream] Setting up event listeners');
+
         const unsubEvent = window.concord.onStreamEvent?.(handleEvent);
-        const unsubError = window.concord.onStreamError?.((err) => console.error('[Stream] Error:', err));
-        const unsubEnd = window.concord.onStreamEnd?.(() => console.log('[Stream] Ended'));
+        const unsubError = window.concord.onStreamError?.((err: string) => {
+            console.error('[EventStream] Error:', err);
+        });
+        const unsubEnd = window.concord.onStreamEnd?.(() => {
+            console.log('[EventStream] Ended');
+        });
 
         return () => {
+            console.log('[EventStream] Cleaning up event listeners');
             unsubEvent?.();
             unsubError?.();
             unsubEnd?.();
