@@ -52,7 +52,6 @@ module.exports = {
             template: './public/index.html',
         }),
         new webpack.DefinePlugin({
-            'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
             'process.env.CONCORD_SERVER': JSON.stringify(process.env.CONCORD_SERVER || 'localhost:9090'),
         }),
     ],

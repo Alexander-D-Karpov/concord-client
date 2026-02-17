@@ -10,8 +10,10 @@ export interface ParticipantInfo {
     userId: string;
     ssrc: number;
     videoSsrc?: number;
+    screenSsrc?: number;
     muted: boolean;
     videoEnabled: boolean;
+    screenSharing: boolean;
     displayName?: string;
     avatarUrl?: string;
     speaking?: boolean;
@@ -30,11 +32,9 @@ export interface VoiceConfig {
 
 export interface WelcomePayload {
     sessionId?: number;
-    session_id?: number;
     ssrc?: number;
-    audio_ssrc?: number;
     videoSsrc?: number;
-    video_ssrc?: number;
+    screenSsrc?: number;
     participants?: any[];
 }
 

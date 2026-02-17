@@ -118,11 +118,17 @@ class ConcordClient {
 
     private promisify<T>(client: any, method: string, request: any, useAuth = false, timeout = 30): Promise<T> {
         return new Promise((resolve, reject) => {
+            const fn = client[method];
+            if (typeof fn !== 'function') {
+                reject(new Error(`Method ${method} not found on client`));
+                return;
+            }
+
             const args = useAuth
                 ? [request, this.getMetadata(), this.getOptions(timeout)]
                 : [request, this.getOptions(timeout)];
 
-            client[method](...args, (err: Error | null, response: T) => {
+            fn.call(client, ...args, (err: Error | null, response: T) => {
                 if (err) reject(err);
                 else resolve(response);
             });
@@ -247,7 +253,7 @@ class ConcordClient {
 
     // Chat
     async getMessages(roomId: string, limit = 50, beforeId?: string) {
-        return this.withAuth(() => this.promisify(this.chatClient, 'ListMessages', { room_id: roomId, limit, before_id: beforeId }, true));
+        return this.withAuth(() => this.promisify(this.chatClient, 'ListMessages', { room_id: roomId, limit, before: beforeId }, true));
     }
 
     async sendMessage(roomId: string, content: string, replyToId?: string, mentions?: string[], attachments?: any[]) {
@@ -299,7 +305,7 @@ class ConcordClient {
     }
 
     async getThread(messageId: string, limit = 50, cursor?: string) {
-        return this.withAuth(() => this.promisify(this.chatClient, 'GetThread', { message_id: messageId, limit, cursor }, true));
+        return this.withAuth(() => this.promisify(this.chatClient, 'GetThread', { message_id: messageId, limit, before: cursor }, true));
     }
 
     // Stream
@@ -316,8 +322,26 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.callClient, 'LeaveVoice', { room_id: roomId }, true));
     }
 
-    async setMediaPrefs(roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean) {
-        return this.withAuth(() => this.promisify(this.callClient, 'SetMediaPrefs', { room_id: roomId, audio_only: audioOnly, video_enabled: videoEnabled, muted }, true));
+    async setMediaPrefs(roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean, screenSharing: boolean) {
+        return this.withAuth(() => this.promisify(this.callClient, 'SetMediaPrefs', {
+            room_id: roomId,
+            audio_only: audioOnly,
+            video_enabled: videoEnabled,
+            muted,
+            screen_sharing: screenSharing
+        }, true));
+    }
+
+    async markAsRead(roomId: string, messageId: string) {
+        return this.withAuth(() => this.promisify(this.chatClient, 'MarkAsRead', { room_id: roomId, message_id: messageId }, true));
+    }
+
+    async getUnreadCounts() {
+        return this.withAuth(() => this.promisify(this.chatClient, 'GetUnreadCounts', {}, true));
+    }
+
+    async markDMAsRead(channelId: string, messageId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'MarkDMAsRead', { channel_id: channelId, message_id: messageId }, true));
     }
 
     async getVoiceStatus(roomId: string) {
@@ -378,39 +402,38 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.adminClient, 'Mute', { room_id: roomId, user_id: userId, muted }, true));
     }
 
-    // DM
+    // DM - using correct proto method names
     async getOrCreateDM(userId: string) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'GetOrCreateDM', { user_id: userId }, true));
+        return this.withAuth(() => this.promisify(this.dmClient, 'CreateDM', { user_id: userId }, true));
     }
 
     async listDMs() {
-        return this.withAuth(() => this.promisify(this.dmClient, 'ListDMs', {}, true));
+        return this.withAuth(() => this.promisify(this.dmClient, 'ListDMChannels', {}, true));
     }
 
-    async closeDM(channelId: string) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'CloseDM', { channel_id: channelId }, true));
+    async getDMChannel(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'GetDMChannel', { channel_id: channelId }, true));
     }
 
-    async sendDMMessage(channelId: string, content: string, attachments?: any[]) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'SendDMMessage', {
-            channel_id: channelId,
-            content,
-            attachments
-        }, true));
+    async sendDMMessage(channelId: string, content: string, replyToId?: string) {
+        const request: any = { channel_id: channelId, content };
+        if (replyToId) request.reply_to_id = replyToId;
+        return this.withAuth(() => this.promisify(this.dmClient, 'SendDM', request, true));
+    }
+
+    async editDMMessage(channelId: string, messageId: string, content: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'EditDM', { channel_id: channelId, message_id: messageId, content }, true));
+    }
+
+    async deleteDMMessage(channelId: string, messageId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'DeleteDM', { channel_id: channelId, message_id: messageId }, true));
     }
 
     async listDMMessages(channelId: string, limit = 50, beforeId?: string) {
         return this.withAuth(() => this.promisify(this.dmClient, 'ListDMMessages', {
             channel_id: channelId,
             limit,
-            before_id: beforeId
-        }, true));
-    }
-
-    async startDMCall(channelId: string, audioOnly = false) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'StartDMCall', {
-            channel_id: channelId,
-            audio_only: audioOnly
+            before: beforeId
         }, true));
     }
 
@@ -425,12 +448,35 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.dmClient, 'LeaveDMCall', { channel_id: channelId }, true));
     }
 
-    async endDMCall(channelId: string) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'EndDMCall', { channel_id: channelId }, true));
+    async closeDM(channelId: string) {
+        // Note: No backend support for closing DM channels - this is a no-op
+        // DM channels persist once created
+        return { success: true };
     }
 
-    async getDMCallStatus(channelId: string) {
-        return this.withAuth(() => this.promisify(this.dmClient, 'GetDMCallStatus', { channel_id: channelId }, true));
+    async startDMCall(channelId: string, audioOnly = false) {
+        // Use JoinDMCall to start a call (first person to join starts it)
+        return this.joinDMCall(channelId, audioOnly);
+    }
+
+    async endDMCall(channelId: string) {
+        // Use LeaveDMCall - call ends when all participants leave
+        return this.leaveDMCall(channelId);
+    }
+
+    async getDMCallStatus(channelId: string): Promise<{ active: boolean; participants: any[] }> {
+        try {
+            const status: any = await this.withAuth(() =>
+                this.promisify(this.callClient, 'GetVoiceStatus', { room_id: channelId }, true)
+            );
+            const participants = status?.participants || [];
+            return {
+                active: participants.length > 0 || (status?.total_participants ?? 0) > 0,
+                participants,
+            };
+        } catch (_err) {
+            return { active: false, participants: [] };
+        }
     }
 }
 

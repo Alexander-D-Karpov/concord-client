@@ -65,6 +65,16 @@ export interface Message {
     pinned?: boolean;
 }
 
+export interface RoomInvite {
+    id: string;
+    roomId: string;
+    roomName: string;
+    inviterId: string;
+    inviterDisplayName: string;
+    inviterAvatarUrl?: string;
+    createdAt: string;
+}
+
 export interface VoiceState {
     userId: string;
     roomId: string;

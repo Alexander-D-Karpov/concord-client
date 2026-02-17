@@ -64,9 +64,8 @@ declare global {
             onStreamEnd(cb: () => void): () => void;
 
             // Voice
-            joinVoice: (roomId: string, audioOnly?: boolean) => Promise<any>;
-            leaveVoice: (roomId: string) => Promise<any>;
-            setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean) => Promise<any>;
+            joinVoice: (roomId: string, audioOnly?: boolean, isDM?: boolean) => Promise<any>;            leaveVoice: (roomId: string) => Promise<any>;
+            setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean, screenSharing: boolean) => Promise<any>;
             getVoiceStatus: (roomId: string) => Promise<any>;
             getVoiceParticipants: () => Promise<{ participants: any[] }>;
             sendVoiceAudio: (data: ArrayBuffer) => Promise<any>;
@@ -86,8 +85,7 @@ declare global {
             onVoiceRTT?: (cb: (rtt: number) => void) => () => void;
             onLocalSpeaking?: (cb: (speaking: boolean) => void) => () => void;
             onVoiceMediaState?: (cb: (data: any) => void) => () => void;
-            setVoiceMediaState: (muted: boolean, videoEnabled: boolean) => Promise<any>;
-
+            setVoiceMediaState: (muted: boolean, videoEnabled: boolean, screenSharing: boolean) => Promise<any>;
             // Friends
             sendFriendRequest(userId: string): Promise<any>;
             acceptFriendRequest(requestId: string): Promise<any>;
@@ -119,6 +117,11 @@ declare global {
             leaveDMCall(channelId: string): Promise<any>;
             endDMCall(channelId: string): Promise<any>;
             getDMCallStatus(channelId: string): Promise<any>;
+
+            // Read tracking
+            markAsRead?: (roomId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
+            markDMAsRead?: (channelId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
+            getUnreadCounts?: () => Promise<{ rooms: Array<{ room_id: string; unread_count: number; last_read_message_id: string }>; total_unread: number }>;
         };
     }
 }

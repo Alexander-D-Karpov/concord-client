@@ -11,7 +11,6 @@ import {
     PacketType,
     PacketFlags,
     CodecType,
-    MTU,
 } from "../../shared/voice/constants";
 
 import {
@@ -29,6 +28,8 @@ import {
 
 import type { MediaHeader, ParticipantInfo, ParticipantLeftPayload } from "../../shared/voice/types";
 import type { VoiceConfig } from "../../shared/voice/types";
+
+const DEBUG_VOICE = true;
 
 export interface VoiceServiceConfig extends VoiceConfig {}
 
@@ -54,15 +55,19 @@ export class VoiceService extends EventEmitter {
     private sessionId?: number;
     private audioSsrc?: number;
     private videoSsrc?: number;
+    private screenSsrc?: number;
 
     private audioSequence = 0;
     private videoSequence = 0;
+    private screenSequence = 0;
 
-    private audioTimestamp = 0; // 48kHz samples
-    private videoTimestamp = 0; // 90kHz ticks
+    private audioTimestamp = 0;
+    private videoTimestamp = 0;
+    private screenTimestamp = 0;
 
     private audioCounter = 0n;
     private videoCounter = 0n;
+    private screenCounter = 0n;
 
     private pingInterval?: NodeJS.Timeout;
     private rrInterval?: NodeJS.Timeout;
@@ -88,6 +93,7 @@ export class VoiceService extends EventEmitter {
 
         this.audioCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
         this.videoCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
+        this.screenCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
     }
 
     async connect(): Promise<void> {
@@ -159,6 +165,7 @@ export class VoiceService extends EventEmitter {
         this.sessionId = undefined;
         this.audioSsrc = undefined;
         this.videoSsrc = undefined;
+        this.screenSsrc = undefined;
 
         this.participants.clear();
         this.ssrcToUserId.clear();
@@ -262,15 +269,9 @@ export class VoiceService extends EventEmitter {
             this.sessionId = welcome.sessionId ?? welcome.session_id;
             this.audioSsrc = welcome.ssrc ?? welcome.audio_ssrc;
             this.videoSsrc = welcome.videoSsrc ?? welcome.video_ssrc;
+            this.screenSsrc = welcome.screenSsrc ?? welcome.screen_ssrc;
 
             const participants = Array.isArray(welcome.participants) ? welcome.participants : [];
-            const participantsCount = participants.length;
-
-            console.log("[VoiceService] WELCOME received", {
-                ssrc: this.audioSsrc ?? 0,
-                video_ssrc: this.videoSsrc ?? 0,
-                participants_count: participantsCount,
-            });
 
             this.participants.clear();
             this.ssrcToUserId.clear();
@@ -281,13 +282,16 @@ export class VoiceService extends EventEmitter {
 
                 const audio = raw.ssrc ?? raw.audioSsrc ?? raw.audio_ssrc ?? 0;
                 const video = raw.videoSsrc ?? raw.video_ssrc ?? 0;
+                const screen = raw.screenSsrc ?? raw.screen_ssrc ?? 0;
 
                 const p: ParticipantInfo = {
                     userId,
                     ssrc: audio >>> 0,
                     videoSsrc: (video >>> 0) || undefined,
+                    screenSsrc: (screen >>> 0) || undefined,
                     muted: !!(raw.muted ?? false),
                     videoEnabled: !!(raw.videoEnabled ?? raw.video_enabled ?? false),
+                    screenSharing: !!(raw.screenSharing ?? raw.screen_sharing ?? false),
                     displayName: raw.displayName ?? raw.display_name,
                     avatarUrl: raw.avatarUrl ?? raw.avatar_url,
                 };
@@ -296,6 +300,7 @@ export class VoiceService extends EventEmitter {
 
                 if (p.ssrc) this.ssrcToUserId.set(p.ssrc, userId);
                 if (p.videoSsrc) this.ssrcToUserId.set(p.videoSsrc, userId);
+                if (p.screenSsrc) this.ssrcToUserId.set(p.screenSsrc, userId);
             }
 
             this.connected = true;
@@ -312,6 +317,7 @@ export class VoiceService extends EventEmitter {
                 sessionId: this.sessionId,
                 ssrc: this.audioSsrc,
                 videoSsrc: this.videoSsrc,
+                screenSsrc: this.screenSsrc,
                 participants: Array.from(this.participants.values()),
             });
         } catch (err) {
@@ -324,32 +330,59 @@ export class VoiceService extends EventEmitter {
     }
 
     private handleMedia(msg: Buffer): void {
-        if (msg.length < MEDIA_HEADER_SIZE) return;
+        if (msg.length < MEDIA_HEADER_SIZE) {
+            if (DEBUG_VOICE) console.log('[VoiceService] Media packet too small:', msg.length);
+            return;
+        }
 
         const header = decodeMediaHeader(new Uint8Array(msg.buffer, msg.byteOffset, MEDIA_HEADER_SIZE));
-        if (!header) return;
+        if (!header) {
+            if (DEBUG_VOICE) console.log('[VoiceService] Failed to decode header');
+            return;
+        }
 
         const ssrc = header.ssrc >>> 0;
         const keyId = header.keyId & 0xff;
         const counter = header.counter;
         const isVideo = header.type === PacketType.VIDEO;
 
+        if (DEBUG_VOICE && this.decryptOk % 100 === 0) {
+            console.log(`[VoiceService] handleMedia: type=${isVideo ? 'video' : 'audio'}, ssrc=${ssrc}, keyId=${keyId}, counter=${counter}, size=${msg.length}`);
+        }
+
+        // Check if this SSRC belongs to us (skip our own packets)
+        if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) {
+            return; // Don't process our own packets
+        }
+
         const rk = this.replayKey(keyId, ssrc);
         let rf = this.replayFilters.get(rk);
         if (!rf) {
             rf = new ReplayFilter();
             this.replayFilters.set(rk, rf);
+            if (DEBUG_VOICE) console.log(`[VoiceService] Created new ReplayFilter for keyId=${keyId}, ssrc=${ssrc}`);
         }
 
-        if (!rf.accept(counter)) return;
+        if (!rf.accept(counter)) {
+            if (DEBUG_VOICE) console.log(`[VoiceService] Replay filter rejected packet: ssrc=${ssrc}, counter=${counter}`);
+            return;
+        }
 
         const aad = Buffer.from(msg.buffer, msg.byteOffset, MEDIA_HEADER_SIZE);
         const ciphertext = Buffer.from(msg.buffer, msg.byteOffset + MEDIA_HEADER_SIZE);
+
+        if (ciphertext.length === 0) {
+            if (DEBUG_VOICE) console.log('[VoiceService] Empty ciphertext');
+            return;
+        }
 
         const plaintext = this.keyRing.open(aad, ciphertext, keyId, ssrc, counter);
 
         if (!plaintext) {
             this.decryptFail++;
+            if (DEBUG_VOICE) {
+                console.error(`[VoiceService] Decrypt FAILED: ssrc=${ssrc}, keyId=${keyId}, counter=${counter}, cipherLen=${ciphertext.length}, ok=${this.decryptOk}, fail=${this.decryptFail}`);
+            }
             this.emit("decrypt-error", {
                 ssrc,
                 keyId,
@@ -362,21 +395,24 @@ export class VoiceService extends EventEmitter {
 
         this.decryptOk++;
 
-        if (isVideo && !this.seenFirstVideoFrom.has(ssrc)) {
-            this.seenFirstVideoFrom.add(ssrc);
-            console.log("[VoiceService] first video packet received from ssrc=", ssrc);
+        if (DEBUG_VOICE && this.decryptOk % 100 === 1) {
+            console.log(`[VoiceService] Decrypt OK #${this.decryptOk}: ssrc=${ssrc}, type=${isVideo ? 'video' : 'audio'}, plainLen=${plaintext.length}`);
+        }
+
+        // Update SSRC mapping if we don't have it
+        if (!this.ssrcToUserId.has(ssrc)) {
+            // Try to find user by checking participants
+            for (const [userId, p] of this.participants) {
+                if (p.ssrc === ssrc || p.videoSsrc === ssrc || p.screenSsrc === ssrc) {
+                    this.ssrcToUserId.set(ssrc, userId);
+                    if (DEBUG_VOICE) console.log(`[VoiceService] Mapped SSRC ${ssrc} to user ${userId}`);
+                    break;
+                }
+            }
         }
 
         const timestampHz = isVideo ? 90000 : 48000;
         this.stats.recordPacketReceived(ssrc, header.sequence, header.timestamp, timestampHz, msg.length);
-
-        if (ssrc !== this.audioSsrc && ssrc !== this.videoSsrc) {
-            const missing = this.stats.getMissingSequences(ssrc, 20);
-            if (missing.length > 0 && this.nackTracker.shouldSendNack(ssrc)) {
-                const nack = buildNackPacket(ssrc, missing);
-                this.send(Buffer.from(nack));
-            }
-        }
 
         this.emitDecryptedMedia(header, plaintext, isVideo);
     }
@@ -416,11 +452,9 @@ export class VoiceService extends EventEmitter {
 
     private handlePong(msg: Buffer): void {
         if (msg.length < 9) return;
-
         const view = new DataView(msg.buffer, msg.byteOffset);
         const sentTime = Number(view.getBigUint64(1, false));
         const rtt = Date.now() - sentTime;
-
         this.stats.recordRtt(rtt);
         this.emit("rtt", rtt);
     }
@@ -433,10 +467,12 @@ export class VoiceService extends EventEmitter {
             const userId = data.userId || data.user_id;
             const ssrc = (data.ssrc ?? 0) >>> 0;
             const videoSsrc = (data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0;
+            const screenSsrc = (data.screenSsrc ?? data.screen_ssrc ?? 0) >>> 0;
 
             if (userId) {
                 if (ssrc) this.ssrcToUserId.set(ssrc, userId);
                 if (videoSsrc) this.ssrcToUserId.set(videoSsrc, userId);
+                if (screenSsrc) this.ssrcToUserId.set(screenSsrc, userId);
             }
 
             this.emit("speaking", {
@@ -457,9 +493,19 @@ export class VoiceService extends EventEmitter {
 
             const ssrc = (data.ssrc ?? 0) >>> 0;
             const videoSsrc = (data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0;
+            const screenSsrc = (data.screenSsrc ?? data.screen_ssrc ?? 0) >>> 0;
+
+            console.log('[VoiceService] MediaState received:', {
+                userId,
+                ssrc,
+                videoSsrc,
+                screenSsrc,
+                screenSharing: data.screenSharing ?? data.screen_sharing
+            });
 
             if (ssrc) this.ssrcToUserId.set(ssrc, userId);
             if (videoSsrc) this.ssrcToUserId.set(videoSsrc, userId);
+            if (screenSsrc) this.ssrcToUserId.set(screenSsrc, userId);
 
             const existing = this.participants.get(userId);
 
@@ -467,11 +513,13 @@ export class VoiceService extends EventEmitter {
                 userId,
                 ssrc: ssrc || existing?.ssrc || 0,
                 videoSsrc: videoSsrc || existing?.videoSsrc,
+                screenSsrc: screenSsrc || existing?.screenSsrc,
                 muted: !!(data.muted ?? existing?.muted ?? false),
                 videoEnabled: !!(data.videoEnabled ?? data.video_enabled ?? existing?.videoEnabled ?? false),
+                screenSharing: !!(data.screenSharing ?? data.screen_sharing ?? existing?.screenSharing ?? false),
+                speaking: existing?.speaking ?? false,
                 displayName: existing?.displayName,
                 avatarUrl: existing?.avatarUrl,
-                speaking: existing?.speaking,
             };
 
             this.participants.set(userId, next);
@@ -479,9 +527,11 @@ export class VoiceService extends EventEmitter {
             this.emit("media-state", {
                 ssrc: next.ssrc,
                 videoSsrc: next.videoSsrc,
+                screenSsrc: next.screenSsrc,
                 userId,
                 muted: next.muted,
                 videoEnabled: next.videoEnabled,
+                screenSharing: next.screenSharing,
             });
 
             if (!existing) {
@@ -489,7 +539,9 @@ export class VoiceService extends EventEmitter {
             } else {
                 this.emit("participant-updated", next);
             }
-        } catch {}
+        } catch (e) {
+            console.error('[VoiceService] Failed to parse MediaState:', e);
+        }
     }
 
     private handleParticipantLeft(msg: Buffer): void {
@@ -540,7 +592,7 @@ export class VoiceService extends EventEmitter {
         const targetSsrc = view.getUint32(1, false);
         const count = view.getUint16(5, false);
 
-        if (targetSsrc !== this.audioSsrc && targetSsrc !== this.videoSsrc) return;
+        if (targetSsrc !== this.audioSsrc && targetSsrc !== this.videoSsrc && targetSsrc !== this.screenSsrc) return;
 
         for (let i = 0; i < count && 7 + i * 2 + 2 <= msg.length; i++) {
             const seq = view.getUint16(7 + i * 2, false);
@@ -555,7 +607,7 @@ export class VoiceService extends EventEmitter {
         const view = new DataView(msg.buffer, msg.byteOffset);
         const targetSsrc = view.getUint32(1, false);
 
-        if (targetSsrc === this.videoSsrc) {
+        if (targetSsrc === this.videoSsrc || targetSsrc === this.screenSsrc) {
             this.emit("pli-requested");
         }
     }
@@ -590,30 +642,56 @@ export class VoiceService extends EventEmitter {
         this.send(packet);
     }
 
-    sendVideo(videoData: Buffer, isKeyframe: boolean): void {
-        if (!this.connected || !this.videoSsrc) return;
+    sendVideo(videoData: Buffer, isKeyframe: boolean, source: 'camera' | 'screen' = 'camera'): void {
+        if (!this.connected) return;
 
-        const timestamp = this.videoTimestamp >>> 0;
-        this.videoTimestamp = (this.videoTimestamp + 3000) >>> 0;
+        let targetSsrc: number | undefined;
+        let sequence: number;
+        let timestamp: number;
+        let counter: bigint;
+
+        if (source === 'screen') {
+            if (!this.screenSsrc) return;
+            targetSsrc = this.screenSsrc;
+            sequence = this.screenSequence;
+            timestamp = this.screenTimestamp;
+            counter = this.screenCounter;
+            this.screenTimestamp = (this.screenTimestamp + 3000) >>> 0;
+        } else {
+            if (!this.videoSsrc) return;
+            targetSsrc = this.videoSsrc;
+            sequence = this.videoSequence;
+            timestamp = this.videoTimestamp;
+            counter = this.videoCounter;
+            this.videoTimestamp = (this.videoTimestamp + 3000) >>> 0;
+        }
 
         const fragments = this.fragmenter.fragment(videoData, isKeyframe);
-        for (const fragPayload of fragments) {
-            this.sendVideoPacket(fragPayload, timestamp, isKeyframe);
+
+        for (let i = 0; i < fragments.length; i++) {
+            const fragPayload = fragments[i];
+            const fragSequence = (sequence + i) & 0xffff;
+            this.sendVideoPacket(fragPayload, timestamp, isKeyframe && i === 0, targetSsrc!, counter + BigInt(i), fragSequence);
+        }
+
+        if (source === 'screen') {
+            this.screenSequence = (sequence + fragments.length) & 0xffff;
+            this.screenCounter = counter + BigInt(fragments.length);
+        } else {
+            this.videoSequence = (sequence + fragments.length) & 0xffff;
+            this.videoCounter = counter + BigInt(fragments.length);
         }
     }
 
-    private sendVideoPacket(payload: Buffer, timestamp: number, isKeyframe: boolean): void {
-        const counter = this.videoCounter++;
-        const sequence = this.videoSequence++ & 0xffff;
-
+    private sendVideoPacket(payload: Buffer, timestamp: number, isKeyframe: boolean, ssrc: number, counter: bigint, sequence: number): void {
         const header: MediaHeader = {
             type: PacketType.VIDEO,
             flags: isKeyframe ? PacketFlags.KEYFRAME : 0,
             keyId: this.config.crypto.keyId,
             codec: CodecType.H264,
-            sequence,
+            sequence: sequence & 0xffff,
             timestamp,
-            ssrc: this.videoSsrc!,
+            ssrc,
             counter,
         };
 
@@ -624,7 +702,10 @@ export class VoiceService extends EventEmitter {
         this.retransmitCache.store(header.ssrc, sequence, packet);
         this.stats.recordPacketSent(packet.length);
 
-        if (packet.length > MTU) return;
+        if (packet.length > 1500) {
+            console.warn(`[VoiceService] Packet exceeds MTU: ${packet.length}`);
+            return;
+        }
 
         this.send(packet);
     }
@@ -635,6 +716,7 @@ export class VoiceService extends EventEmitter {
         const payload = {
             ssrc: this.audioSsrc,
             video_ssrc: this.videoSsrc,
+            screen_ssrc: this.screenSsrc,
             user_id: this.config.userId,
             room_id: this.config.roomId,
             speaking,
@@ -644,29 +726,46 @@ export class VoiceService extends EventEmitter {
         this.send(Buffer.from(packet));
     }
 
-    setMediaState(muted: boolean, videoEnabled: boolean): void {
+    setMediaState(muted: boolean, videoEnabled: boolean, screenSharing: boolean): void {
+
         if (!this.connected || !this.audioSsrc) return;
 
         const payload = {
             ssrc: this.audioSsrc,
             video_ssrc: this.videoSsrc,
+            screen_ssrc: this.screenSsrc,
             user_id: this.config.userId,
             room_id: this.config.roomId,
             muted,
             video_enabled: videoEnabled,
+            screen_sharing: screenSharing,
         };
 
         const packet = buildMediaStatePacket(payload);
         this.send(Buffer.from(packet));
     }
 
-    requestKeyframe(targetVideoSsrc: number): void {
+    requestKeyframe(targetSsrc: number): void {
         if (!this.connected) return;
 
-        if (this.pliTracker.shouldSendPli(targetVideoSsrc)) {
-            const packet = buildPliPacket(targetVideoSsrc);
+        if (this.pliTracker.shouldSendPli(targetSsrc)) {
+            const packet = buildPliPacket(targetSsrc);
             this.send(Buffer.from(packet));
         }
+    }
+
+    setSubscriptions(ssrcs: number[]): void {
+        if (!this.connected) return;
+
+        // PacketType 0x0e = SUBSCRIBE
+        const packetType = 0x0e;
+        const payload = JSON.stringify({ subscriptions: ssrcs });
+        const jsonBytes = new TextEncoder().encode(payload);
+        const packet = new Uint8Array(1 + jsonBytes.length);
+        packet[0] = packetType;
+        packet.set(jsonBytes, 1);
+
+        this.send(Buffer.from(packet));
     }
 
     private startPingInterval(): void {
@@ -682,7 +781,7 @@ export class VoiceService extends EventEmitter {
             if (!this.connected || !this.audioSsrc) return;
 
             for (const [ssrc] of this.ssrcToUserId) {
-                if (ssrc === this.audioSsrc || ssrc === this.videoSsrc) continue;
+                if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
 
                 const streamStats = this.stats.getStreamStats(ssrc);
                 if (!streamStats) continue;
@@ -691,7 +790,7 @@ export class VoiceService extends EventEmitter {
 
                 const packet = buildReceiverReport(
                     ssrc,
-                    this.audioSsrc,
+                    this.audioSsrc!,
                     fractionLost,
                     streamStats.packetsLost,
                     streamStats.highestSeq,
@@ -728,6 +827,10 @@ export class VoiceService extends EventEmitter {
 
     getVideoSSRC(): number | undefined {
         return this.videoSsrc;
+    }
+
+    getScreenSSRC(): number | undefined {
+        return this.screenSsrc;
     }
 
     getSessionId(): number | undefined {

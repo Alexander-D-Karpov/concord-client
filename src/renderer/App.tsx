@@ -5,6 +5,9 @@ import Home from './pages/Home';
 import Settings from './pages/Settings';
 import Friends from './pages/Friends';
 import { useAuthStore } from './hooks/useAuthStore';
+import ToastContainer from './components/ToastContainer';
+import IncomingCallOverlay from './components/IncomingCallOverlay';
+import { useDMCallListeners } from './hooks/useDMCallListeners';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { isAuthenticated } = useAuthStore();
@@ -19,6 +22,8 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 const App: React.FC = () => {
     const { startTokenRefresh, tokens } = useAuthStore();
 
+    useDMCallListeners();
+
     useEffect(() => {
         if (tokens) {
             startTokenRefresh();
@@ -27,6 +32,8 @@ const App: React.FC = () => {
 
     return (
         <HashRouter>
+            <ToastContainer />
+            <IncomingCallOverlay />
             <Routes>
                 <Route path="/login" element={<Login />} />
                 <Route

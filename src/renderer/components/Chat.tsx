@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, {useState, useEffect, useRef, useCallback, useMemo} from 'react';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useMessagesStore } from '../hooks/useMessagesStore';
 import { useAuthStore } from '../hooks/useAuthStore';
@@ -11,6 +11,7 @@ import FileUpload from './FileUpload';
 import ContextMenu, { ContextMenuItem } from './ContextMenu';
 import InviteMemberModal from './InviteMemberModal';
 import { Message as UiMessage } from '../types';
+import { useNotificationStore } from '../hooks/useNotificationStore';
 import MessageReactions from './MessageReaction';
 
 const tsToIso = (ts: any): string => {
@@ -65,8 +66,13 @@ const Chat: React.FC = () => {
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: UiMessage } | null>(null);
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
+    const [attachments, setAttachments] = useState<File[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messageInputRef = useRef<HTMLInputElement>(null);
+    const markAsReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const lastMarkedMessageRef = useRef<string | null>(null);
+    const markInFlightRef = useRef(false);
+    const isMountedRef = useRef(true);
 
     const currentRoom = rooms.find(r => r.id === currentRoomId);
     const roomMessages = currentRoomId ? messages[currentRoomId] || [] : [];
@@ -90,9 +96,9 @@ const Chat: React.FC = () => {
             return cachedUser.displayName || cachedUser.handle;
         }
 
-        fetchUser(userId);
+        // Fallback to ID while loading (fetching handled by useEffect)
         return userId.split('-')[0];
-    }, [user, getUser, fetchUser, getMemberInfo]);
+    }, [user, getUser, getMemberInfo]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -113,9 +119,13 @@ const Chat: React.FC = () => {
             const mapped = res.messages.map(mapMessage);
             setMessages(currentRoomId, mapped);
 
+            // Initial fetch of users for loaded messages
             const uniqueUserIds = [...new Set(mapped.map((m: UiMessage) => m.authorId))] as string[];
-            const { fetchUsers } = useUsersStore.getState();
-            await fetchUsers(uniqueUserIds);
+            if (uniqueUserIds.length > 0) {
+                const { fetchUsers } = useUsersStore.getState();
+                // Run in background to avoid blocking
+                setTimeout(() => fetchUsers(uniqueUserIds), 0);
+            }
         } catch (err: any) {
             console.error('[Chat] Failed to load messages:', err);
             setMessages(currentRoomId, []);
@@ -130,22 +140,91 @@ const Chat: React.FC = () => {
         }
     }, [currentRoomId, loadMessages]);
 
+    // Fetch users whenever messages change
     useEffect(() => {
-        const uniqueUserIds = [...new Set(roomMessages.map(m => m.authorId))];
-        if (uniqueUserIds.length > 0) {
-            const { fetchUsers } = useUsersStore.getState();
-            fetchUsers(uniqueUserIds);
+        if (roomMessages.length > 0) {
+            const uniqueUserIds = [...new Set(roomMessages.map(m => m.authorId))];
+            if (uniqueUserIds.length > 0) {
+                const { fetchUsers } = useUsersStore.getState();
+                fetchUsers(uniqueUserIds);
+            }
         }
-    }, [roomMessages]);
+    }, [roomMessages]); // Intentionally using reference dependency to trigger on new messages
 
     useEffect(() => {
         scrollToBottom();
     }, [roomMessages.length]);
 
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => { isMountedRef.current = false; };
+    }, []);
+
+    const lastRealMessageId = useMemo(() => {
+        if (!roomMessages || roomMessages.length === 0) return null;
+        for (let i = roomMessages.length - 1; i >= 0; i--) {
+            const id = roomMessages[i].id;
+            if (!id.startsWith('temp-')) return id;
+        }
+        return null;
+    }, [roomMessages]);
+
+    // Mark as read logic
+    useEffect(() => {
+        if (!currentRoomId || !lastRealMessageId) return;
+        if (lastRealMessageId === lastMarkedMessageRef.current) return;
+
+        const storedLastRead = useNotificationStore.getState().getLastRead('room', currentRoomId);
+        if (storedLastRead === lastRealMessageId) {
+            lastMarkedMessageRef.current = lastRealMessageId;
+            return;
+        }
+
+        if (markAsReadTimeoutRef.current) {
+            clearTimeout(markAsReadTimeoutRef.current);
+        }
+
+        const roomId = currentRoomId;
+        const messageId = lastRealMessageId;
+
+        markAsReadTimeoutRef.current = setTimeout(() => {
+            if (!isMountedRef.current) return;
+            if (markInFlightRef.current) return;
+
+            const activeRoomId = useRoomsStore.getState().currentRoomId;
+            if (activeRoomId !== roomId) return;
+
+            const currentLastRead = useNotificationStore.getState().getLastRead('room', roomId);
+            if (currentLastRead === messageId) return;
+
+            markInFlightRef.current = true;
+            lastMarkedMessageRef.current = messageId;
+
+            useNotificationStore.getState()
+                .markAsRead('room', roomId, messageId)
+                .catch(err => console.error('[Chat] Failed to mark as read:', err))
+                .finally(() => { markInFlightRef.current = false; });
+        }, 1000);
+
+        return () => {
+            if (markAsReadTimeoutRef.current) {
+                clearTimeout(markAsReadTimeoutRef.current);
+            }
+        };
+    }, [currentRoomId, lastRealMessageId]);
+
+    useEffect(() => {
+        lastMarkedMessageRef.current = null;
+    }, [currentRoomId]);
+
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if ((!newMessage.trim() && attachments.length === 0) || !currentRoomId) {
+        if (!newMessage.trim() && attachments.length === 0) {
+            return;
+        }
+
+        if (!currentRoomId) {
             return;
         }
 
@@ -155,7 +234,7 @@ const Chat: React.FC = () => {
         }
 
         setSendError(null);
-        const content = newMessage.trim();
+        const content = newMessage.trim() || (attachments.length > 0 ? ' ' : '');
         const filesToSend = [...attachments];
         const tempId = `temp-${Date.now()}`;
 
@@ -184,10 +263,7 @@ const Chat: React.FC = () => {
 
         try {
             if (editingMessage) {
-                console.log('[Chat] Editing message:', editingMessage.id);
                 const response = await window.concord.editMessage(editingMessage.id, content);
-                console.log('[Chat] Edit message response:', response);
-
                 if (response) {
                     updateMessage(currentRoomId, editingMessage.id, content);
                 }
@@ -203,7 +279,6 @@ const Chat: React.FC = () => {
                 }> | undefined;
 
                 if (filesToSend.length > 0) {
-                    console.log('[Chat] Processing attachments:', filesToSend.length);
                     attachmentData = await Promise.all(
                         filesToSend.map(async (file) => {
                             const arrayBuffer = await file.arrayBuffer();
@@ -231,20 +306,7 @@ const Chat: React.FC = () => {
                             };
                         })
                     );
-
-                    console.log('[Chat] Attachments processed:', {
-                        count: attachmentData.length,
-                        totalSize: attachmentData.reduce((sum, att) => sum + att.data.length, 0),
-                    });
                 }
-
-                console.log('[Chat] Sending message:', {
-                    roomId: currentRoomId,
-                    contentLength: content.length,
-                    hasAttachments: !!attachmentData,
-                    replyToId: replyingTo?.id,
-                    mentionsCount: mentions.length,
-                });
 
                 const response = await window.concord.sendMessage(
                     currentRoomId,
@@ -254,13 +316,10 @@ const Chat: React.FC = () => {
                     attachmentData
                 );
 
-                console.log('[Chat] Send message response:', response);
-
                 deleteMessage(currentRoomId, tempId);
 
                 if (response && response.message) {
                     const mapped = mapMessage(response.message);
-                    console.log('[Chat] Mapped message:', mapped);
                     addMessage(currentRoomId, mapped);
                     scrollToBottom();
                 } else {
@@ -352,8 +411,6 @@ const Chat: React.FC = () => {
             console.error('[Chat] Failed to remove reaction:', err);
         }
     };
-
-    const [attachments, setAttachments] = useState<File[]>([]);
 
     const handleFileUpload = async (file: File) => {
         if (!currentRoomId) return;

@@ -51,11 +51,14 @@ export class Fragmenter {
 
 export class Reassembler {
     private frames = new Map<number, Map<number, Fragment>>();
-    private frameMeta = new Map<number, { fragCount: number; frameLength: number; isKeyframe: boolean }>();
+    private frameMeta = new Map<number, { fragCount: number; frameLength: number; isKeyframe: boolean; firstFragTime: number }>();
     private maxAge: number;
     private maxFrames: number;
+    private lastCleanup = 0;
+    private completedFrames = 0;
+    private droppedFrames = 0;
 
-    constructor(maxAgeMs = 200, maxFrames = 30) {
+    constructor(maxAgeMs = 1000, maxFrames = 120) {
         this.maxAge = maxAgeMs;
         this.maxFrames = maxFrames;
     }
@@ -74,21 +77,39 @@ export class Reassembler {
             return null;
         }
 
-        this.cleanup();
+        const now = Date.now();
+        if (now - this.lastCleanup > 200) {
+            this.cleanup(now);
+            this.lastCleanup = now;
+        }
 
         if (!this.frames.has(frameId)) {
             if (this.frames.size >= this.maxFrames) {
-                const oldestId = this.frames.keys().next().value as number | undefined;
+                let oldestId: number | undefined;
+                let oldestTime = Infinity;
+                for (const [id, meta] of this.frameMeta) {
+                    if (meta.firstFragTime < oldestTime) {
+                        oldestTime = meta.firstFragTime;
+                        oldestId = id;
+                    }
+                }
                 if (oldestId !== undefined) {
                     this.frames.delete(oldestId);
                     this.frameMeta.delete(oldestId);
+                    this.droppedFrames++;
                 }
             }
             this.frames.set(frameId, new Map());
-            this.frameMeta.set(frameId, { fragCount, frameLength, isKeyframe });
+            this.frameMeta.set(frameId, { fragCount, frameLength, isKeyframe, firstFragTime: now });
         }
 
         const frameFrags = this.frames.get(frameId)!;
+        const meta = this.frameMeta.get(frameId)!;
+
+        if (isKeyframe) {
+            meta.isKeyframe = true;
+        }
+
         const fragData = payload.subarray(FRAG_HEADER_SIZE);
 
         frameFrags.set(fragIndex, {
@@ -97,10 +118,11 @@ export class Reassembler {
             fragCount,
             frameLength,
             data: Buffer.from(fragData),
-            receivedAt: Date.now(),
+            receivedAt: now,
         });
 
         if (frameFrags.size === fragCount) {
+            this.completedFrames++;
             return this.assembleFrame(frameId);
         }
 
@@ -133,13 +155,11 @@ export class Reassembler {
         return { frameId, data: frameData, isKeyframe };
     }
 
-    private cleanup(): void {
-        const now = Date.now();
+    private cleanup(now: number): void {
         const toDelete: number[] = [];
 
-        for (const [frameId, frags] of this.frames) {
-            const anyFrag = frags.values().next().value;
-            if (anyFrag && now - anyFrag.receivedAt > this.maxAge) {
+        for (const [frameId, meta] of this.frameMeta) {
+            if (now - meta.firstFragTime > this.maxAge) {
                 toDelete.push(frameId);
             }
         }
@@ -147,6 +167,15 @@ export class Reassembler {
         for (const id of toDelete) {
             this.frames.delete(id);
             this.frameMeta.delete(id);
+            this.droppedFrames++;
         }
+    }
+
+    getStats() {
+        return {
+            pendingFrames: this.frames.size,
+            completedFrames: this.completedFrames,
+            droppedFrames: this.droppedFrames,
+        };
     }
 }

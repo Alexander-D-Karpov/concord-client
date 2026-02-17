@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useFriendsStore } from '../hooks/useFriendsStore';
+import { useDMStore } from '../hooks/useDMStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 import { Friend, FriendRequest } from '../types';
 
@@ -25,7 +27,9 @@ const FriendsList: React.FC = () => {
         unblockUser,
     } = useFriendsStore();
 
+    const { getOrCreateDM, setCurrentChannel } = useDMStore();
     const { user } = useAuthStore();
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState<Tab>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [addFriendHandle, setAddFriendHandle] = useState('');
@@ -41,6 +45,18 @@ const FriendsList: React.FC = () => {
             loadBlockedUsers();
         }
     }, [activeTab, loadBlockedUsers]);
+
+    const handleOpenDM = async (userId: string) => {
+        try {
+            const channel = await getOrCreateDM(userId);
+            if (channel) {
+                setCurrentChannel(channel.id);
+                navigate('/');
+            }
+        } catch (err) {
+            console.error('Failed to open DM:', err);
+        }
+    };
 
     const handleAcceptRequest = async (requestId: string) => {
         setActionLoading(requestId);
@@ -222,6 +238,7 @@ const FriendsList: React.FC = () => {
                                 <FriendCard
                                     key={friend.userId}
                                     friend={friend}
+                                    onMessage={() => handleOpenDM(friend.userId)}
                                     onRemove={() => handleRemoveFriend(friend.userId)}
                                     onBlock={() => handleBlockUser(friend.userId)}
                                     loading={actionLoading === friend.userId}
@@ -236,14 +253,13 @@ const FriendsList: React.FC = () => {
                         {incomingRequests.length > 0 && (
                             <div>
                                 <h3 className="text-lg font-semibold text-white mb-3">
-                                    Incoming ({incomingRequests.length})
+                                    Incoming Requests ({incomingRequests.length})
                                 </h3>
                                 <div className="space-y-2">
                                     {incomingRequests.map((request) => (
                                         <IncomingRequestCard
                                             key={request.id}
                                             request={request}
-                                            currentUserId={user?.id || ''}
                                             onAccept={() => handleAcceptRequest(request.id)}
                                             onReject={() => handleRejectRequest(request.id)}
                                             loading={actionLoading === request.id}
@@ -256,14 +272,13 @@ const FriendsList: React.FC = () => {
                         {outgoingRequests.length > 0 && (
                             <div>
                                 <h3 className="text-lg font-semibold text-white mb-3">
-                                    Outgoing ({outgoingRequests.length})
+                                    Sent Requests ({outgoingRequests.length})
                                 </h3>
                                 <div className="space-y-2">
                                     {outgoingRequests.map((request) => (
                                         <OutgoingRequestCard
                                             key={request.id}
                                             request={request}
-                                            currentUserId={user?.id || ''}
                                             onCancel={() => handleCancelRequest(request.id)}
                                             loading={actionLoading === request.id}
                                         />
@@ -332,82 +347,79 @@ const FriendsList: React.FC = () => {
 
 const FriendCard: React.FC<{
     friend: Friend;
+    onMessage: () => void;
     onRemove: () => void;
     onBlock: () => void;
     loading: boolean;
-}> = ({ friend, onRemove, onBlock, loading }) => {
+}> = ({ friend, onMessage, onRemove, onBlock, loading }) => {
     const [showMenu, setShowMenu] = useState(false);
 
     const getStatusColor = (status?: string) => {
         switch (status) {
-            case 'online':
-                return 'bg-green-500';
-            case 'idle':
-                return 'bg-yellow-500';
-            case 'dnd':
-                return 'bg-red-500';
-            default:
-                return 'bg-dark-500';
+            case 'online': return 'bg-green-500';
+            case 'idle': return 'bg-yellow-500';
+            case 'dnd': return 'bg-red-500';
+            default: return 'bg-dark-500';
         }
     };
 
-    const getStatusLabel = (status?: string) => status || 'offline';
-
     return (
         <div className="flex items-center justify-between p-3 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
-            <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
-                    {friend.displayName[0].toUpperCase()}
+            <button
+                onClick={onMessage}
+                className="flex items-center space-x-3 flex-1 text-left"
+            >
+                <div className="relative">
+                    <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
+                        {friend.displayName[0].toUpperCase()}
+                    </div>
+                    <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-dark-800 ${getStatusColor(friend.status)}`} />
                 </div>
                 <div>
-                    <div className="font-semibold text-white flex items-center space-x-2">
-                        <span>{friend.displayName}</span>
-                        <span className={`w-2 h-2 rounded-full ${getStatusColor(friend.status)}`} />
-                    </div>
-                    <div className="text-sm text-dark-400 flex items-center space-x-2">
-                        <span>@{friend.handle}</span>
-                        <span className="text-xs capitalize">{getStatusLabel(friend.status)}</span>
-                    </div>
+                    <div className="font-semibold text-white">{friend.displayName}</div>
+                    <div className="text-sm text-dark-400">@{friend.handle}</div>
                 </div>
-            </div>
-            <div className="relative">
+            </button>
+            <div className="flex items-center space-x-2">
                 <button
-                    onClick={() => setShowMenu(!showMenu)}
-                    className="p-2 text-dark-400 hover:text-white transition"
-                    disabled={loading}
+                    onClick={onMessage}
+                    className="p-2 text-dark-400 hover:text-white hover:bg-dark-600 rounded-lg transition"
+                    title="Send Message"
                 >
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                     </svg>
                 </button>
-                {showMenu && (
-                    <>
-                        <div
-                            className="fixed inset-0 z-10"
-                            onClick={() => setShowMenu(false)}
-                        />
-                        <div className="absolute right-0 mt-2 w-48 bg-dark-700 border border-dark-600 rounded-lg shadow-lg z-20">
-                            <button
-                                onClick={() => {
-                                    onRemove();
-                                    setShowMenu(false);
-                                }}
-                                className="w-full px-4 py-2 text-left text-red-400 hover:bg-dark-600 transition"
-                            >
-                                Remove Friend
-                            </button>
-                            <button
-                                onClick={() => {
-                                    onBlock();
-                                    setShowMenu(false);
-                                }}
-                                className="w-full px-4 py-2 text-left text-red-400 hover:bg-dark-600 transition"
-                            >
-                                Block User
-                            </button>
-                        </div>
-                    </>
-                )}
+                <div className="relative">
+                    <button
+                        onClick={() => setShowMenu(!showMenu)}
+                        className="p-2 text-dark-400 hover:text-white transition"
+                        disabled={loading}
+                    >
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                        </svg>
+                    </button>
+                    {showMenu && (
+                        <>
+                            <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                            <div className="absolute right-0 mt-2 w-48 bg-dark-700 border border-dark-600 rounded-lg shadow-lg z-20">
+                                <button
+                                    onClick={() => { onRemove(); setShowMenu(false); }}
+                                    className="w-full px-4 py-2 text-left text-red-400 hover:bg-dark-600 transition rounded-t-lg"
+                                >
+                                    Remove Friend
+                                </button>
+                                <button
+                                    onClick={() => { onBlock(); setShowMenu(false); }}
+                                    className="w-full px-4 py-2 text-left text-red-400 hover:bg-dark-600 transition rounded-b-lg"
+                                >
+                                    Block User
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -415,7 +427,6 @@ const FriendCard: React.FC<{
 
 const IncomingRequestCard: React.FC<{
     request: FriendRequest;
-    currentUserId: string;
     onAccept: () => void;
     onReject: () => void;
     loading: boolean;
@@ -432,6 +443,9 @@ const IncomingRequestCard: React.FC<{
                         <div className="text-sm text-dark-400">@{request.fromHandle}</div>
                     </div>
                 </div>
+                <div className="text-xs text-dark-500">
+                    {new Date(request.createdAt).toLocaleDateString()}
+                </div>
             </div>
             <div className="flex space-x-2">
                 <button
@@ -439,7 +453,7 @@ const IncomingRequestCard: React.FC<{
                     disabled={loading}
                     className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-dark-600 text-white font-semibold rounded-lg transition"
                 >
-                    Accept
+                    {loading ? 'Processing...' : 'Accept'}
                 </button>
                 <button
                     onClick={onReject}
@@ -455,7 +469,6 @@ const IncomingRequestCard: React.FC<{
 
 const OutgoingRequestCard: React.FC<{
     request: FriendRequest;
-    currentUserId: string;
     onCancel: () => void;
     loading: boolean;
 }> = ({ request, onCancel, loading }) => {

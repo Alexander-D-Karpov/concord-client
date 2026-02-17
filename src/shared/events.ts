@@ -28,6 +28,7 @@ export interface ServerEventPayload {
     ack?: { event_id: string };
     friend_request_created?: { request: ProtoFriendRequest };
     friend_request_updated?: { request: ProtoFriendRequest };
+    friend_removed?: { user_id: string };
 }
 
 export interface ServerEvent {

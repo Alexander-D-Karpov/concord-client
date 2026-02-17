@@ -17,8 +17,10 @@ export interface WelcomeParticipant {
     userId: string;
     audioSsrc: number;
     videoSsrc: number;
+    screenSsrc: number;
     muted: boolean;
     videoEnabled: boolean;
+    screenSharing: boolean;
 }
 
 export class VoiceClient extends EventEmitter {
@@ -71,17 +73,20 @@ export class VoiceClient extends EventEmitter {
         this.service.sendAudio(audioData);
     }
 
-    sendVideo(videoData: Buffer, isKeyframe: boolean): void {
-        this.service.sendVideo(videoData, isKeyframe);
+    sendVideo(videoData: Buffer, isKeyframe: boolean, source: 'camera' | 'screen' = 'camera'): void {
+        this.service.sendVideo(videoData, isKeyframe, source);
+    }
+
+    setSubscriptions(ssrcs: number[]): void {
+        this.service.setSubscriptions(ssrcs);
     }
 
     setSpeaking(speaking: boolean): void {
         this.service.setSpeaking(speaking);
     }
 
-    setMediaState(muted: boolean, videoEnabled: boolean): void {
-        this.service.setMediaState(muted, videoEnabled);
-    }
+    setMediaState(muted: boolean, videoEnabled: boolean, screenSharing: boolean): void {
+        this.service.setMediaState(muted, videoEnabled, screenSharing);}
 
     requestKeyframe(ssrc: number): void {
         this.service.requestKeyframe(ssrc);
@@ -99,6 +104,10 @@ export class VoiceClient extends EventEmitter {
         return this.service.getVideoSSRC();
     }
 
+    getScreenSSRC(): number | undefined {
+        return this.service.getScreenSSRC();
+    }
+
     getSessionId(): number | undefined {
         return this.service.getSessionId();
     }
@@ -108,8 +117,10 @@ export class VoiceClient extends EventEmitter {
             userId: p.userId,
             audioSsrc: p.ssrc || 0,
             videoSsrc: p.videoSsrc || 0,
+            screenSsrc: p.screenSsrc || 0,
             muted: p.muted,
             videoEnabled: p.videoEnabled,
+            screenSharing: p.screenSharing,
         }));
     }
 

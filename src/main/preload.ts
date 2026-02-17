@@ -92,20 +92,26 @@ contextBridge.exposeInMainWorld('concord', {
     },
 
     // Voice
-    joinVoice: (roomId: string, audioOnly?: boolean) => invoke('voice:join', { roomId, audioOnly }),
+    joinVoice: (roomId: string, audioOnly?: boolean, isDM?: boolean) =>
+        invoke('voice:join', { roomId, audioOnly, isDM }),
     leaveVoice: (roomId: string) => invoke('voice:leave', { roomId }),
-    setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean) =>
-        invoke('voice:setMediaPrefs', { roomId, audioOnly, videoEnabled, muted }),
+    setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean, screenSharing: boolean) =>
+        invoke('voice:setMediaPrefs', { roomId, audioOnly, videoEnabled, muted, screenSharing }),
     getVoiceStatus: (roomId: string) => invoke('voice:getStatus', { roomId }),
     getVoiceParticipants: () => invoke('voice:getParticipants'),
     sendVoiceAudio: (data: ArrayBuffer) => {
         ipcRenderer.send('voice:sendAudio', new Uint8Array(data));
         return Promise.resolve({ success: true });
     },
-    sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean) => {
-        ipcRenderer.send('voice:sendVideo', { data: new Uint8Array(data), isKeyframe });
+    sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean, source: 'camera' | 'screen') => {
+        ipcRenderer.send('voice:sendVideo', {
+            data: Array.from(new Uint8Array(data)),
+            isKeyframe,
+            source
+        });
         return Promise.resolve({ success: true });
     },
+    updateVoiceSubscriptions: (ssrcs: number[]) => ipcRenderer.invoke('voice:subscriptions', ssrcs),
     setVoiceSpeaking: (speaking: boolean) => invoke('voice:setSpeaking', { speaking }),
     isVoiceConnected: () => invoke('voice:isConnected'),
     onVoiceParticipantLeft: (cb: (data: any) => void) => {
@@ -120,8 +126,8 @@ contextBridge.exposeInMainWorld('concord', {
         return () => ipcRenderer.removeListener('voice:media-state', handler);
     },
 
-    setVoiceMediaState: (muted: boolean, videoEnabled: boolean) =>
-        invoke('voice:setMediaState', { muted, videoEnabled }),
+    setVoiceMediaState: (muted: boolean, videoEnabled: boolean, screenSharing: boolean) =>
+        invoke('voice:setMediaState', { muted, videoEnabled, screenSharing }),
 
     // Voice events
     onVoiceSpeaking: (cb: (data: any) => void) => {
@@ -218,4 +224,8 @@ contextBridge.exposeInMainWorld('concord', {
     leaveDMCall: (channelId: string) => invoke('dm:leaveCall', { channelId }),
     endDMCall: (channelId: string) => invoke('dm:endCall', { channelId }),
     getDMCallStatus: (channelId: string) => invoke('dm:callStatus', { channelId }),
+
+    markAsRead: (roomId: string, messageId: string) => invoke('chat:markAsRead', { roomId, messageId }),
+    markDMAsRead: (channelId: string, messageId: string) => invoke('dm:markAsRead', { channelId, messageId }),
+    getUnreadCounts: () => invoke('chat:getUnreadCounts'),
 });

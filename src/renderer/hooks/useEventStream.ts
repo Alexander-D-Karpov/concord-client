@@ -3,7 +3,10 @@ import { useRoomsStore } from './useRoomsStore';
 import { useMessagesStore } from './useMessagesStore';
 import { useFriendsStore } from './useFriendsStore';
 import { useUsersStore } from './useUsersStore';
-import { Message, Member, MessageReaction, Room } from '../types';
+import { useNotifications } from './useNotifications';
+import { useNotificationStore } from './useNotificationStore';
+import { useDMStore, DMMessage } from './useDMStore';
+import { Message, Member, MessageReaction, Room, RoomInvite } from '../types';
 
 const tsToIso = (ts: any): string => {
     if (!ts) return '';
@@ -52,7 +55,6 @@ const mapMember = (m: any): Member => ({
     status: m.status || 'offline',
 });
 
-
 const mapRoom = (r: any): Room => ({
     id: r.id,
     name: r.name,
@@ -64,6 +66,14 @@ const mapRoom = (r: any): Room => ({
     isPrivate: r.is_private,
 });
 
+const debounce = <T extends (...args: any[]) => any>(fn: T, ms: number) => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    return (...args: Parameters<T>) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), ms);
+    };
+};
+
 const mapReaction = (r: any): MessageReaction => ({
     id: r.id,
     messageId: r.message_id ?? r.messageId,
@@ -72,11 +82,40 @@ const mapReaction = (r: any): MessageReaction => ({
     createdAt: tsToIso(r.created_at ?? r.createdAt),
 });
 
+const mapRoomInvite = (i: any): RoomInvite => ({
+    id: i.id,
+    roomId: i.room_id,
+    roomName: i.room_name,
+    inviterId: i.invited_by,
+    inviterDisplayName: i.inviter_display_name || i.inviter_handle,
+    inviterAvatarUrl: i.inviter_avatar_url,
+    createdAt: tsToIso(i.created_at),
+});
+
 export const useEventStream = () => {
-    const { setMembers, setRooms, rooms, updateRoom: updateRoomInStore } = useRoomsStore();
-    const { addMessage, updateMessage, deleteMessage, addReaction, removeReaction, setPinned } = useMessagesStore();
-    const { loadFriends, loadPendingRequests } = useFriendsStore();
-    const { setUser } = useUsersStore();
+    const setMembers = useRoomsStore(state => state.setMembers);
+    const updateRoomInStore = useRoomsStore(state => state.updateRoom);
+    const setRoomInvites = useRoomsStore(state => state.setRoomInvites);
+
+    const addMessage = useMessagesStore(state => state.addMessage);
+    const updateMessage = useMessagesStore(state => state.updateMessage);
+    const deleteMessage = useMessagesStore(state => state.deleteMessage);
+    const addReaction = useMessagesStore(state => state.addReaction);
+    const removeReaction = useMessagesStore(state => state.removeReaction);
+    const setPinned = useMessagesStore(state => state.setPinned);
+
+    const loadFriends = useFriendsStore(state => state.loadFriends);
+    const loadPendingRequests = useFriendsStore(state => state.loadPendingRequests);
+
+    const setUser = useUsersStore(state => state.setUser);
+    const getUser = useUsersStore(state => state.getUser);
+
+    const { notifyMessage, notifyDM, notifyFriendRequest, notifyCall } = useNotifications();
+
+    const setUnread = useNotificationStore(state => state.setUnread);
+    const setLastRead = useNotificationStore(state => state.setLastRead);
+
+    const addDMMessage = useDMStore(state => state.addMessage);
 
     const refreshRoomMembers = useCallback(async (roomId: string) => {
         try {
@@ -85,15 +124,36 @@ export const useEventStream = () => {
         } catch {}
     }, [setMembers]);
 
+    const debouncedNotifyMessage = useCallback(
+        debounce((msg: Parameters<typeof notifyMessage>[0]) => {
+            notifyMessage(msg);
+        }, 100),
+        [notifyMessage]
+    );
+
     const handleEvent = useCallback((raw: any) => {
         if (!raw) return;
 
         const p = raw;
 
-        // Message events
         if (p.message_created?.message) {
             const msg = mapMessage(p.message_created.message);
             addMessage(msg.roomId, msg);
+
+            const currentRooms = useRoomsStore.getState().rooms;
+            const room = currentRooms.find(r => r.id === msg.roomId);
+            const author = getUser(msg.authorId);
+
+            setTimeout(() => {
+                notifyMessage({
+                    roomId: msg.roomId,
+                    roomName: room?.name || 'Unknown',
+                    authorId: msg.authorId,
+                    authorName: author?.displayName || author?.handle || 'Unknown',
+                    content: msg.content,
+                    mentions: msg.mentions,
+                });
+            }, 0);
             return;
         }
 
@@ -109,21 +169,13 @@ export const useEventStream = () => {
         }
 
         if (p.message_reaction_added?.reaction) {
-            addReaction(
-                p.message_reaction_added.room_id,
-                p.message_reaction_added.message_id,
-                mapReaction(p.message_reaction_added.reaction)
-            );
+            addReaction(p.message_reaction_added.room_id, p.message_reaction_added.message_id, mapReaction(p.message_reaction_added.reaction));
             return;
         }
 
         if (p.message_reaction_removed) {
             const { room_id, message_id, reaction_id, user_id } = p.message_reaction_removed;
-            removeReaction(
-                room_id,
-                message_id,
-                reaction_id ? { id: reaction_id } : { userId: user_id }
-            );
+            removeReaction(room_id, message_id, reaction_id ? { id: reaction_id } : { userId: user_id });
             return;
         }
 
@@ -137,131 +189,161 @@ export const useEventStream = () => {
             return;
         }
 
-        // Member events
-        if (p.member_joined?.member) {
-            refreshRoomMembers(p.member_joined.member.room_id);
-            return;
-        }
+        if (p.member_joined?.member) { refreshRoomMembers(p.member_joined.member.room_id); return; }
+        if (p.member_removed) { refreshRoomMembers(p.member_removed.room_id); return; }
+        if (p.member_nickname_changed) { refreshRoomMembers(p.member_nickname_changed.room_id); return; }
+        if (p.role_changed) { refreshRoomMembers(p.role_changed.room_id); return; }
+        if (p.room_updated?.room) { updateRoomInStore(mapRoom(p.room_updated.room)); return; }
 
-        if (p.member_removed) {
-            refreshRoomMembers(p.member_removed.room_id);
-            return;
-        }
+        if (p.voice_state_changed) { window.dispatchEvent(new CustomEvent('voice-state-changed', { detail: p.voice_state_changed })); return; }
+        if (p.voice_user_joined) { window.dispatchEvent(new CustomEvent('voice-user-joined', { detail: p.voice_user_joined })); return; }
+        if (p.voice_user_left) { window.dispatchEvent(new CustomEvent('voice-user-left', { detail: p.voice_user_left })); return; }
 
-        if (p.member_nickname_changed) {
-            refreshRoomMembers(p.member_nickname_changed.room_id);
-            return;
-        }
-
-        if (p.role_changed) {
-            refreshRoomMembers(p.role_changed.room_id);
-            return;
-        }
-
-        // Room events
-        if (p.room_updated?.room) {
-            const room = mapRoom(p.room_updated.room);
-            updateRoomInStore(room);
-            return;
-        }
-
-        // Voice events - dispatch as CustomEvents for useVoiceClient to handle
-        if (p.voice_state_changed) {
-            console.log('[EventStream] Voice state changed:', p.voice_state_changed);
-            window.dispatchEvent(
-                new CustomEvent('voice-state-changed', { detail: p.voice_state_changed })
-            );
-            return;
-        }
-
-        if (p.voice_user_joined) {
-            console.log('[EventStream] Voice user joined:', p.voice_user_joined);
-            window.dispatchEvent(
-                new CustomEvent('voice-user-joined', { detail: p.voice_user_joined })
-            );
-            return;
-        }
-
-        if (p.voice_user_left) {
-            console.log('[EventStream] Voice user left:', p.voice_user_left);
-            window.dispatchEvent(
-                new CustomEvent('voice-user-left', { detail: p.voice_user_left })
-            );
-            return;
-        }
-
-        // User events
         if (p.user_status_changed) {
             const { user_id, status } = p.user_status_changed;
             setUser({ id: user_id, status } as any);
+
+            useDMStore.setState(state => ({
+                channels: state.channels.map(ch =>
+                    ch.otherUserId === user_id ? { ...ch, otherUserStatus: status } : ch
+                )
+            }));
+
+            useFriendsStore.getState().updateFriendStatus(user_id, status);
             return;
         }
 
         if (p.profile_updated) {
             const { user_id, display_name, avatar_url, status, bio } = p.profile_updated;
-            setUser({
-                id: user_id,
-                displayName: display_name,
-                avatarUrl: avatar_url,
-                status,
-                bio,
-            } as any);
+            setUser({ id: user_id, displayName: display_name, avatarUrl: avatar_url, status, bio } as any);
+            useDMStore.setState(state => ({
+                channels: state.channels.map(ch =>
+                    ch.otherUserId === user_id ? {
+                        ...ch,
+                        otherUserDisplay: display_name || ch.otherUserDisplay,
+                        otherUserAvatar: avatar_url || ch.otherUserAvatar,
+                        otherUserStatus: status || ch.otherUserStatus
+                    } : ch
+                )
+            }));
             return;
         }
 
-        // Friend events
-        if (p.friend_request_created || p.friend_request_updated) {
+        if (p.friend_request_created?.request) {
             loadPendingRequests();
-            loadFriends();
+            const req = p.friend_request_created.request;
+            notifyFriendRequest({ fromUserId: req.from_user_id, fromName: req.from_display_name || req.from_handle });
+            return;
+        }
+        if (p.friend_request_updated) { loadPendingRequests(); loadFriends(); return; }
+        if (p.friend_removed) { loadFriends(); return; }
+
+        if (p.room_invite_received) {
+            window.concord.listRoomInvites().then((res: { incoming: any; }) => {
+                setRoomInvites((res.incoming || []).map(mapRoomInvite));
+            });
+
+            notifyMessage({
+                roomId: '',
+                roomName: 'System',
+                authorId: '',
+                authorName: 'Concord',
+                content: `You were invited to ${p.room_invite_received.room_name} by ${p.room_invite_received.inviter_display_name}`
+            });
             return;
         }
 
-        if (p.friend_removed) {
-            loadFriends();
+        if (p.room_invite_created?.invite) {
+            window.concord.listRoomInvites().then((res: { incoming: any; }) => {
+                setRoomInvites((res.incoming || []).map(mapRoomInvite));
+            });
             return;
         }
 
-        // Room invite events
-        if (p.room_invite_received || p.room_invite_created || p.room_invite_updated) {
-            // Could trigger a refresh of room invites if we had that in a store
+        if (p.room_invite_updated?.invite) {
+            window.concord.listRoomInvites().then((res: { incoming: any; }) => {
+                setRoomInvites((res.incoming || []).map(mapRoomInvite));
+            });
             return;
         }
 
-        // Log unhandled events for debugging
-        const eventKeys = Object.keys(p).filter(k => !['event_id', 'created_at', 'payload'].includes(k));
-        if (eventKeys.length > 0) {
-            console.log('[EventStream] Unhandled event keys:', eventKeys);
+        if (p.dm_message_created?.message) {
+            const msg = p.dm_message_created.message;
+            const channelId = msg.channel_id || p.dm_message_created.channel_id;
+
+            const dmMessage: DMMessage = {
+                id: msg.id,
+                channelId: channelId,
+                authorId: msg.author_id,
+                content: msg.content,
+                createdAt: tsToIso(msg.created_at),
+                deleted: false,
+                attachments: msg.attachments || []
+            };
+            addDMMessage(channelId, dmMessage);
+
+            const author = getUser(msg.author_id);
+            notifyDM({
+                channelId: channelId,
+                authorId: msg.author_id,
+                authorName: author?.displayName || author?.handle || 'Unknown',
+                content: msg.content,
+            });
+            return;
         }
+
+        if (p.dm_call_started) {
+            const { channel_id, caller_id } = p.dm_call_started;
+            const caller = getUser(caller_id);
+            const callerName = caller?.displayName || caller?.handle || 'Unknown';
+
+            window.dispatchEvent(new CustomEvent('dm-call-started', {
+                detail: { ...p.dm_call_started, caller_name: callerName }
+            }));
+
+            notifyCall({
+                channelId: channel_id,
+                callerName: callerName,
+            });
+            return;
+        }
+
+        if (p.dm_call_ended) {
+            window.dispatchEvent(new CustomEvent('dm-call-ended', { detail: p.dm_call_ended }));
+            return;
+        }
+
+        if (p.unread_count_updated) {
+            const { room_id, channel_id, unread_count, last_message_id } = p.unread_count_updated;
+            if (room_id) {
+                setUnread('room', room_id, unread_count || 0);
+                if (last_message_id) setLastRead('room', room_id, last_message_id);
+            } else if (channel_id) {
+                setUnread('dm', channel_id, unread_count || 0);
+                if (last_message_id) setLastRead('dm', channel_id, last_message_id);
+            }
+            return;
+        }
+
+        if (p.message_read) {
+            const { room_id, channel_id, message_id } = p.message_read;
+            if (room_id && message_id) setLastRead('room', room_id, message_id);
+            if (channel_id && message_id) setLastRead('dm', channel_id, message_id);
+            return;
+        }
+
     }, [
-        addMessage,
-        updateMessage,
-        deleteMessage,
-        addReaction,
-        removeReaction,
-        setPinned,
-        refreshRoomMembers,
-        updateRoomInStore,
-        setUser,
-        loadFriends,
-        loadPendingRequests,
+        addMessage, updateMessage, deleteMessage, addReaction, removeReaction, setPinned,
+        refreshRoomMembers, updateRoomInStore, setUser, getUser, loadFriends, loadPendingRequests,
+        notifyMessage, notifyDM, notifyFriendRequest, notifyCall, setUnread, setLastRead, addDMMessage,
+        setRoomInvites
     ]);
 
     useEffect(() => {
-        console.log('[EventStream] Setting up event listeners');
-
         const unsubEvent = window.concord.onStreamEvent?.(handleEvent);
-        const unsubError = window.concord.onStreamError?.((err: string) => {
-            console.error('[EventStream] Error:', err);
-        });
-        const unsubEnd = window.concord.onStreamEnd?.(() => {
-            console.log('[EventStream] Ended');
-        });
+        const unsubError = window.concord.onStreamError?.((err: string) => { console.error('[EventStream] Error:', err); });
+        const unsubEnd = window.concord.onStreamEnd?.(() => { console.log('[EventStream] Ended'); });
 
-        return () => {
-            console.log('[EventStream] Cleaning up event listeners');
-            unsubEvent?.();
-            unsubError?.();
-            unsubEnd?.();
-        };
+        return () => { unsubEvent?.(); unsubError?.(); unsubEnd?.(); };
     }, [handleEvent]);
 };

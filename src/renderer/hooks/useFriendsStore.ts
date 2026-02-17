@@ -16,6 +16,8 @@ interface FriendsState {
     setLoading: (loading: boolean) => void;
     setError: (error: string | null) => void;
 
+    updateFriendStatus: (userId: string, status: string) => void;
+
     loadFriends: () => Promise<void>;
     loadPendingRequests: () => Promise<void>;
     loadBlockedUsers: () => Promise<void>;
@@ -68,6 +70,12 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
     setBlockedUsers: (users) => set({ blockedUsers: users }),
     setLoading: (loading) => set({ loading }),
     setError: (error) => set({ error }),
+
+    updateFriendStatus: (userId, status) => set((state) => ({
+        friends: state.friends.map(f =>
+            f.userId === userId ? { ...f, status } : f
+        )
+    })),
 
     loadFriends: async () => {
         set({ loading: true, error: null });

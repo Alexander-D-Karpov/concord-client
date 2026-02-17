@@ -1,14 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import Chat from '../components/Chat';
+import DMChat from '../components/DMChat';
 import MemberList from '../components/MemberList';
+import { useNotificationStore } from '../hooks/useNotificationStore';
 import { useRoomsStore } from '../hooks/useRoomsStore';
+import { useDMStore } from '../hooks/useDMStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 import { useSettingsStore } from '../hooks/useSettingsStore';
 import { useEventStream } from '../hooks/useEventStream';
 
 const Home: React.FC = () => {
-    const { setRooms } = useRoomsStore();
+    const { setRooms, currentRoomId } = useRoomsStore();
+    const { currentChannelId, loadChannels } = useDMStore();
     const { tokens, user, setUser, isRefreshing, isInitializing } = useAuthStore();
     const { settings } = useSettingsStore();
 
@@ -22,9 +26,7 @@ const Home: React.FC = () => {
     useEffect(() => {
         const loadUserAndRooms = async () => {
             if (!tokens?.accessToken || isInitializing || initializedRef.current) {
-                if (!tokens?.accessToken) {
-                    setLoading(false);
-                }
+                if (!tokens?.accessToken) setLoading(false);
                 return;
             }
 
@@ -53,12 +55,17 @@ const Home: React.FC = () => {
                     createdAt: new Date(Number(r.created_at?.seconds || 0) * 1000).toISOString(),
                 }));
                 setRooms(rooms);
+
+                await loadChannels();
             } catch (err) {
                 console.error('Failed to load data:', err);
                 initializedRef.current = false;
             } finally {
                 setLoading(false);
             }
+
+            const { syncUnreadFromApi } = useNotificationStore.getState();
+            await syncUnreadFromApi();
         };
 
         if (!isInitializing && !isRefreshing) {
@@ -68,16 +75,19 @@ const Home: React.FC = () => {
 
     useEffect(() => {
         const handleKeyPress = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement;
+            if (['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable) {
+                if (e.key === 'Escape') target.blur();
+                return;
+            }
+
             if (e.key === 'Escape') {
-                if (showSidebar) {
-                    setShowSidebar(false);
-                } else if (showMemberList) {
-                    setShowMemberList(false);
-                }
+                if (showSidebar) setShowSidebar(false);
+                else if (showMemberList) setShowMemberList(false);
             }
 
             if (e.ctrlKey || e.metaKey) {
-                switch (e.key) {
+                switch (e.key.toLowerCase()) {
                     case 'b':
                         e.preventDefault();
                         setShowSidebar(prev => !prev);
@@ -91,13 +101,6 @@ const Home: React.FC = () => {
         };
 
         window.addEventListener('keydown', handleKeyPress);
-
-        window.addEventListener('error', (e) => {
-            console.error('[Renderer] error:', e.error || e.message);
-        });
-        window.addEventListener('unhandledrejection', (e) => {
-            console.error('[Renderer] unhandledrejection:', e.reason);
-        });
         return () => window.removeEventListener('keydown', handleKeyPress);
     }, [showSidebar, showMemberList]);
 
@@ -114,71 +117,50 @@ const Home: React.FC = () => {
         );
     }
 
+    const showDM = currentChannelId && !currentRoomId;
+
     return (
         <div className="flex h-screen overflow-hidden relative bg-dark-900">
             <button
                 onClick={() => setShowSidebar(!showSidebar)}
                 className="lg:hidden fixed top-4 left-4 z-30 p-2 bg-dark-800 rounded-lg border border-dark-700 text-white shadow-lg"
-                title="Toggle Sidebar (Ctrl+B)"
             >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
             </button>
 
-            <button
-                onClick={() => setShowMemberList(!showMemberList)}
-                className="lg:hidden fixed top-4 right-4 z-30 p-2 bg-dark-800 rounded-lg border border-dark-700 text-white shadow-lg"
-                title="Toggle Members (Ctrl+U)"
-            >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-            </button>
-
-            {showSidebar && (
-                <div
-                    className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
-                    onClick={() => setShowSidebar(false)}
-                />
+            {!showDM && (
+                <button
+                    onClick={() => setShowMemberList(!showMemberList)}
+                    className="lg:hidden fixed top-4 right-4 z-30 p-2 bg-dark-800 rounded-lg border border-dark-700 text-white shadow-lg"
+                >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                </button>
             )}
 
-            <div
-                className={`fixed lg:relative inset-y-0 left-0 z-50 transform transition-transform duration-300 ${
-                    showSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-                }`}
-            >
+            {showSidebar && (
+                <div className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setShowSidebar(false)} />
+            )}
+
+            <div className={`fixed lg:relative inset-y-0 left-0 z-50 transform transition-transform duration-300 ${showSidebar ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
                 <Sidebar />
             </div>
 
-            <Chat />
+            {showDM ? <DMChat /> : <Chat />}
 
-            {settings.showMemberList && (
+            {!showDM && settings.showMemberList && (
                 <>
                     {showMemberList && (
-                        <div
-                            className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
-                            onClick={() => setShowMemberList(false)}
-                        />
+                        <div className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setShowMemberList(false)} />
                     )}
-                    <div
-                        className={`fixed lg:relative inset-y-0 right-0 z-50 transform transition-transform duration-300 lg:block ${
-                            showMemberList ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
-                        }`}
-                    >
+                    <div className={`fixed lg:relative inset-y-0 right-0 z-50 transform transition-transform duration-300 lg:block ${showMemberList ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
                         <MemberList />
                     </div>
                 </>
             )}
-
-            <div className="hidden lg:block fixed bottom-4 right-4 bg-dark-800 border border-dark-700 rounded-lg p-3 text-xs text-dark-400 z-10">
-                <div className="font-semibold mb-2">Keyboard Shortcuts:</div>
-                <div className="space-y-1">
-                    <div><kbd className="px-1.5 py-0.5 bg-dark-700 rounded">Ctrl+B</kbd> Toggle Sidebar</div>
-                    <div><kbd className="px-1.5 py-0.5 bg-dark-700 rounded">Ctrl+U</kbd> Toggle Members</div>
-                    <div><kbd className="px-1.5 py-0.5 bg-dark-700 rounded">ESC</kbd> Close Panels</div>
-                </div>
-            </div>
         </div>
     );
 };

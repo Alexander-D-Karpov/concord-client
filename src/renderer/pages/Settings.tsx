@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSettingsStore } from '../hooks/useSettingsStore';
 import { useAuthStore } from '../hooks/useAuthStore';
+import { useNotificationStore } from '../hooks/useNotificationStore';
+import SoundSettings from '../components/SoundSettings';
 
 const Settings: React.FC = () => {
     const navigate = useNavigate();
@@ -13,6 +15,7 @@ const Settings: React.FC = () => {
         bio: '',
     });
     const [saving, setSaving] = useState(false);
+    const { settings: notifSettings, updateSettings: updateNotifSettings } = useNotificationStore();
 
     const handleLogout = () => {
         logout();
@@ -193,42 +196,136 @@ const Settings: React.FC = () => {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <div className="font-medium text-white">Desktop Notifications</div>
-                                    <div className="text-sm text-dark-400">Show notifications for new messages</div>
+                                    <div className="font-medium text-white">Enable Notifications</div>
+                                    <div className="text-sm text-dark-400">Master toggle for all notifications</div>
                                 </div>
                                 <button
-                                    onClick={() => updateSettings({ notifications: !settings.notifications })}
+                                    onClick={() => updateNotifSettings({ enabled: !notifSettings.enabled })}
                                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                                        settings.notifications ? 'bg-primary-600' : 'bg-dark-600'
+                                        notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
                                     }`}
                                 >
-                                    <span
-                                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                                            settings.notifications ? 'translate-x-6' : 'translate-x-1'
-                                        }`}
-                                    />
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                        notifSettings.enabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`} />
                                 </button>
                             </div>
 
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="font-medium text-white">Sound Effects</div>
-                                    <div className="text-sm text-dark-400">Play sounds for events</div>
+                            <div className="border-t border-dark-700 pt-4">
+                                <h3 className="text-sm font-medium text-dark-300 mb-3">Room Messages</h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Sound</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ sound: !notifSettings.sound })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.sound && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.sound ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Toast Popup</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ toast: !notifSettings.toast })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.toast && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.toast ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Desktop Notification</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ native: !notifSettings.native })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.native && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.native ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Mentions Only</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ mentionsOnly: !notifSettings.mentionsOnly })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.mentionsOnly && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.mentionsOnly ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
                                 </div>
-                                <button
-                                    onClick={() => updateSettings({ sounds: !settings.sounds })}
-                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                                        settings.sounds ? 'bg-primary-600' : 'bg-dark-600'
-                                    }`}
-                                >
-                                    <span
-                                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                                            settings.sounds ? 'translate-x-6' : 'translate-x-1'
-                                        }`}
-                                    />
-                                </button>
+                            </div>
+
+                            <div className="border-t border-dark-700 pt-4">
+                                <h3 className="text-sm font-medium text-dark-300 mb-3">Direct Messages</h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Sound</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ dmSound: !notifSettings.dmSound })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.dmSound && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.dmSound ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Toast Popup</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ dmToast: !notifSettings.dmToast })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.dmToast && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.dmToast ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-white">Desktop Notification</span>
+                                        <button
+                                            onClick={() => updateNotifSettings({ dmNative: !notifSettings.dmNative })}
+                                            disabled={!notifSettings.enabled}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                                                notifSettings.dmNative && notifSettings.enabled ? 'bg-primary-600' : 'bg-dark-600'
+                                            } ${!notifSettings.enabled ? 'opacity-50' : ''}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                                                notifSettings.dmNative ? 'translate-x-6' : 'translate-x-1'
+                                            }`} />
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
+                    </div>
+
+                    <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
+                        <h2 className="text-xl font-semibold text-white mb-4">Notification Sounds</h2>
+                        <SoundSettings />
                     </div>
 
                     <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">

@@ -1,21 +1,53 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const http = require('http');
 
-const protoSrc = path.join(__dirname, '../../concord/api/proto');
-const protoDest = path.join(__dirname, '../proto');
+const BACKEND_PROTO_PATH = path.join(__dirname, '../../concord/api/proto');
+const LOCAL_PROTO_PATH = path.join(__dirname, '../proto');
+
+const PROTO_DIRS = [
+    'auth/v1',
+    'users/v1',
+    'rooms/v1',
+    'chat/v1',
+    'stream/v1',
+    'call/v1',
+    'membership/v1',
+    'friends/v1',
+    'dm/v1',
+    'admin/v1',
+    'common/v1',
+    'registry/v1',
+];
+
+const GOOGLE_PROTOS = {
+    'google/api/annotations.proto': 'https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto',
+    'google/api/http.proto': 'https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto',
+};
+
+const OPENAPI_PROTOS = {
+    'protoc-gen-openapiv2/options/annotations.proto': 'https://raw.githubusercontent.com/grpc-ecosystem/grpc-gateway/main/protoc-gen-openapiv2/options/annotations.proto',
+    'protoc-gen-openapiv2/options/openapiv2.proto': 'https://raw.githubusercontent.com/grpc-ecosystem/grpc-gateway/main/protoc-gen-openapiv2/options/openapiv2.proto',
+};
+
+const PROTOBUF_PROTOS = {
+    'google/protobuf/timestamp.proto': 'https://raw.githubusercontent.com/protocolbuffers/protobuf/main/src/google/protobuf/timestamp.proto',
+    'google/protobuf/wrappers.proto': 'https://raw.githubusercontent.com/protocolbuffers/protobuf/main/src/google/protobuf/wrappers.proto',
+};
+
+function ensureDir(dir) {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+}
 
 function copyDir(src, dest) {
-    if (!fs.existsSync(dest)) {
-        fs.mkdirSync(dest, { recursive: true });
-    }
-
+    ensureDir(dest);
     const entries = fs.readdirSync(src, { withFileTypes: true });
-
     for (const entry of entries) {
         const srcPath = path.join(src, entry.name);
         const destPath = path.join(dest, entry.name);
-
         if (entry.isDirectory()) {
             copyDir(srcPath, destPath);
         } else {
@@ -24,19 +56,29 @@ function copyDir(src, dest) {
     }
 }
 
-function download(url, dest) {
+function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
-        const dir = path.dirname(dest);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+        ensureDir(path.dirname(dest));
+
+        if (fs.existsSync(dest)) {
+            resolve();
+            return;
         }
 
+        const protocol = url.startsWith('https') ? https : http;
         const file = fs.createWriteStream(dest);
-        https.get(url, (response) => {
+
+        protocol.get(url, (response) => {
             if (response.statusCode === 301 || response.statusCode === 302) {
-                download(response.headers.location, dest).then(resolve).catch(reject);
+                downloadFile(response.headers.location, dest).then(resolve).catch(reject);
                 return;
             }
+
+            if (response.statusCode !== 200) {
+                reject(new Error(`Failed to download ${url}: ${response.statusCode}`));
+                return;
+            }
+
             response.pipe(file);
             file.on('finish', () => {
                 file.close();
@@ -49,41 +91,53 @@ function download(url, dest) {
     });
 }
 
-async function ensureGoogleProtos() {
-    const googleProtos = [
-        {
-            url: 'https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto',
-            dest: path.join(protoDest, 'google/api/annotations.proto')
-        },
-        {
-            url: 'https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto',
-            dest: path.join(protoDest, 'google/api/http.proto')
-        },
-        {
-            url: 'https://raw.githubusercontent.com/protocolbuffers/protobuf/main/src/google/protobuf/timestamp.proto',
-            dest: path.join(protoDest, 'google/protobuf/timestamp.proto')
-        },
-        {
-            url: 'https://raw.githubusercontent.com/protocolbuffers/protobuf/main/src/google/protobuf/wrappers.proto',
-            dest: path.join(protoDest, 'google/protobuf/wrappers.proto')
-        }
-    ];
-
-    for (const proto of googleProtos) {
-        if (!fs.existsSync(proto.dest)) {
-            console.log(`Downloading ${path.basename(proto.dest)}...`);
-            await download(proto.url, proto.dest);
-        }
-    }
-}
-
 async function main() {
     console.log('Copying proto files from backend...');
-    copyDir(protoSrc, protoDest);
+
+    for (const dir of PROTO_DIRS) {
+        const srcDir = path.join(BACKEND_PROTO_PATH, dir);
+        const destDir = path.join(LOCAL_PROTO_PATH, dir);
+
+        if (fs.existsSync(srcDir)) {
+            copyDir(srcDir, destDir);
+            console.log(`Copied ${dir}`);
+        } else {
+            console.warn(`Warning: Source directory not found: ${srcDir}`);
+        }
+    }
+
     console.log('Proto files copied successfully!');
 
     console.log('Ensuring google proto dependencies...');
-    await ensureGoogleProtos();
+    for (const [file, url] of Object.entries(GOOGLE_PROTOS)) {
+        const dest = path.join(LOCAL_PROTO_PATH, file);
+        try {
+            await downloadFile(url, dest);
+        } catch (err) {
+            console.error(`Failed to download ${file}:`, err.message);
+        }
+    }
+
+    console.log('Ensuring OpenAPI proto dependencies...');
+    for (const [file, url] of Object.entries(OPENAPI_PROTOS)) {
+        const dest = path.join(LOCAL_PROTO_PATH, file);
+        try {
+            await downloadFile(url, dest);
+        } catch (err) {
+            console.error(`Failed to download ${file}:`, err.message);
+        }
+    }
+
+    console.log('Ensuring google/protobuf dependencies...');
+    for (const [file, url] of Object.entries(PROTOBUF_PROTOS)) {
+        const dest = path.join(LOCAL_PROTO_PATH, file);
+        try {
+            await downloadFile(url, dest);
+        } catch (err) {
+            console.error(`Failed to download ${file}:`, err.message);
+        }
+    }
+
     console.log('All proto files ready!');
 }
 

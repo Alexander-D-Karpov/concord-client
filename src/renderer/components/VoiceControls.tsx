@@ -1,16 +1,18 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useVoiceClient } from '../hooks/useVoiceClient';
 import { useAudioPlayback } from '../hooks/useAudioPlayback';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import { useRoomsStore } from '../hooks/useRoomsStore';
+import { useDMStore } from '../hooks/useDMStore';
 import DeviceSelector from './DeviceSelector';
 import VideoGrid from './VideoGrid';
 
 interface VoiceControlsProps {
     roomId: string;
+    isDM?: boolean;
 }
 
-const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
+const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId, isDM = false }) => {
     const {
         state,
         connect,
@@ -20,24 +22,45 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
         setVideoEnabled,
         setScreenSharing,
         getSsrcToUserIdMap,
+        toggleSubscription
     } = useVoiceClient(roomId);
+
     const { rooms } = useRoomsStore();
+    const { channels } = useDMStore();
     const [showSettings, setShowSettings] = useState(false);
     const [isFullscreenCall, setIsFullscreenCall] = useState(false);
+    // Track intentional disconnect to prevent auto-rejoin
+    const [userIntentionallyDisconnected, setUserIntentionallyDisconnected] = useState(false);
 
     useAudioPlayback(state.connected, state.deafened);
     const { isSpeaking, audioLevel } = useAudioCapture(state.connected && !state.muted);
 
-    const currentRoom = rooms.find(r => r.id === roomId);
+    const roomName = isDM
+        ? channels.find(c => c.channel.id === roomId)?.otherUserDisplay || 'DM Call'
+        : rooms.find(r => r.id === roomId)?.name || 'Unknown Room';
+
+    // Auto-connect for DM calls, but respect intentional disconnects
+    useEffect(() => {
+        if (isDM && !state.connected && !state.connecting && !userIntentionallyDisconnected) {
+            console.log('[VoiceControls] Auto-connecting to DM call');
+            connect(false, true);
+        }
+    }, [isDM, roomId, state.connected, state.connecting, connect, userIntentionallyDisconnected]);
+
+    const handleDisconnect = useCallback(async () => {
+        setUserIntentionallyDisconnected(true);
+        setIsFullscreenCall(false);
+        await disconnect();
+    }, [disconnect]);
 
     const toggleCall = useCallback(async () => {
         if (state.connected) {
-            setIsFullscreenCall(false);
-            await disconnect();
+            await handleDisconnect();
         } else {
-            await connect(false);
+            setUserIntentionallyDisconnected(false);
+            await connect(false, isDM);
         }
-    }, [state.connected, connect, disconnect]);
+    }, [state.connected, handleDisconnect, connect, isDM]);
 
     const toggleFullscreen = useCallback(() => {
         setIsFullscreenCall(prev => !prev);
@@ -45,7 +68,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
 
     if (state.connecting) {
         return (
-            <div className="p-4 border-t border-dark-700 flex-shrink-0">
+            <div className="p-4 border-t border-dark-700 flex-shrink-0 bg-dark-800">
                 <div className="text-center py-3 text-dark-400">
                     <div className="flex items-center justify-center space-x-2">
                         <div className="w-4 h-4 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
@@ -56,7 +79,24 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
         );
     }
 
-    if (!state.connected) {
+    // If intentionally disconnected in a DM, show a rejoin button instead of controls
+    if (!state.connected && isDM && userIntentionallyDisconnected) {
+        return (
+            <div className="p-4 border-t border-dark-700 flex-shrink-0">
+                <button
+                    onClick={() => {
+                        setUserIntentionallyDisconnected(false);
+                        connect(false, true);
+                    }}
+                    className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition"
+                >
+                    Rejoin Call
+                </button>
+            </div>
+        );
+    }
+
+    if (!state.connected && !isDM) {
         return (
             <div className="p-4 border-t border-dark-700 flex-shrink-0">
                 {state.error && (
@@ -92,12 +132,15 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
     return (
         <div className={`flex-shrink-0 flex flex-col ${isFullscreenCall ? 'fixed inset-0 z-50 bg-dark-900' : ''}`}>
             <VideoGrid
+                roomId={roomId}
                 participants={state.participants}
                 localVideoEnabled={state.videoEnabled}
                 localScreenSharing={state.screenSharing}
                 localMuted={state.muted}
                 localSpeaking={isSpeaking}
                 ssrcToUserId={getSsrcToUserIdMap()}
+                disabledSSRCs={state.disabledSSRCs}
+                toggleSubscription={toggleSubscription}
                 isFullscreenCall={isFullscreenCall}
                 onToggleFullscreen={toggleFullscreen}
             />
@@ -107,7 +150,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
                     <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center space-x-2">
                             <div className="text-sm font-medium text-white">Voice Connected</div>
-                            {currentRoom && <span className="text-xs text-dark-400">· # {currentRoom.name}</span>}
+                            <span className="text-xs text-dark-400">· {roomName}</span>
                         </div>
                         <div className="flex items-center space-x-2">
                             <div className={`w-2 h-2 rounded-full ${isSpeaking ? 'bg-green-500 animate-pulse' : 'bg-dark-500'}`} />
@@ -188,7 +231,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId }) => {
                     </button>
 
                     <button
-                        onClick={() => { setIsFullscreenCall(false); disconnect(); }}
+                        onClick={handleDisconnect}
                         className="p-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
                         title="Disconnect"
                     >

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
 import ConcordClient from './grpc-client';
 import { VoiceClient, VoiceConfig } from './voice-client';
+import {serialize} from "node:v8";
 
 let mainWindow: BrowserWindow | null = null;
 let client: ConcordClient | null = null;
@@ -15,27 +16,24 @@ let currentVoiceAudioOnly: boolean | null = null;
 let voiceJoinPromise: Promise<any> | null = null;
 let voiceJoinKey: string | null = null;
 
-
-
-const LOG_IPC = false;
-const LOG_STREAM_EVENTS = false;
-const LOG_VERBOSE = false;
+const LOG_IPC = true;
+const LOG_STREAM_EVENTS = true;
+const LOG_VERBOSE = true;
 
 function configureHardwareAcceleration() {
-    app.commandLine.appendSwitch('ignore-gpu-blocklist');
-
     if (process.platform === 'linux') {
-        app.commandLine.appendSwitch('disable-gpu-sandbox');
+        app.commandLine.appendSwitch('use-gl', 'angle');
         app.commandLine.appendSwitch('use-angle', 'gl');
-        app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiVideoEncoder');
-        app.commandLine.appendSwitch('use-gl', 'desktop');
+        app.commandLine.appendSwitch('ignore-gpu-blocklist');
+        app.commandLine.appendSwitch('enable-features',
+            'VaapiVideoDecoder,VaapiVideoEncoder,VaapiVideoDecodeLinuxGL,' +
+            'VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,' +
+            'AcceleratedVideoEncoder'
+        );
     }
 
-    if (process.platform === 'win32' || process.platform === 'darwin') {
-        app.commandLine.appendSwitch('enable-gpu-rasterization');
-        app.commandLine.appendSwitch('enable-accelerated-video-decode');
-        app.commandLine.appendSwitch('enable-accelerated-video-encode');
-        app.commandLine.appendSwitch('enable-features', 'PlatformHEVCEncoderSupport');
+    if (process.platform === 'win32') {
+        app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
     }
 }
 
@@ -53,7 +51,13 @@ const ipcLog = (channel: string, direction: 'IN' | 'OUT', data?: any, error?: an
     if (error) {
         console.log(`${errorColor}[IPC ${timestamp}] ${arrow} ${channel} ERROR:${reset}`, error?.message || error);
     } else if (LOG_VERBOSE && data !== undefined) {
-        const preview = JSON.stringify(data, null, 2);
+        const sanitized = JSON.parse(JSON.stringify(data, (key, value) => {
+            if (key === 'data' && Array.isArray(value) && value.length > 10) {
+                return `[${value.length} bytes]`;
+            }
+            return value;
+        }));
+        const preview = JSON.stringify(sanitized, null, 2);
         console.log(`${color}[IPC ${timestamp}] ${arrow} ${channel}${reset}`, preview);
     } else {
         console.log(`${color}[IPC ${timestamp}] ${arrow} ${channel}${reset}`);
@@ -81,10 +85,11 @@ function createWindow() {
         minWidth: 800,
         minHeight: 600,
         webPreferences: {
+            autoplayPolicy: 'no-user-gesture-required',
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
-            backgroundThrottling: false,  // Critical for media apps
+            backgroundThrottling: false,
         },
         show: false,
         titleBarStyle: 'hidden',
@@ -142,7 +147,13 @@ function startEventStream() {
             );
 
         streamLog(`EVENT: ${eventType || 'unknown'}`, event);
-        mainWindow?.webContents.send('stream:event', event);
+        try {
+            const bytes = serialize(event).length;
+            console.log("[STREAM] event serialized bytes:", bytes);
+        } catch (e) {
+            console.log("[STREAM] serialize failed:", e);
+        }
+        mainWindow?.webContents.send("stream:event", event);
     });
 
     stream.on('error', async (error: any) => {
@@ -428,8 +439,15 @@ function setupIPC() {
         }));
     });
 
+    handleIpc('chat:markAsRead', async (_e, { roomId, messageId }) =>
+        assertClient().markAsRead(roomId, messageId));
+    handleIpc('chat:getUnreadCounts', async () =>
+        assertClient().getUnreadCounts());
+    handleIpc('dm:markAsRead', async (_e, { channelId, messageId }) =>
+        assertClient().markDMAsRead(channelId, messageId));
+
     // Voice
-    handleIpc("voice:join", async (_e, { roomId, audioOnly }) => {
+    handleIpc("voice:join", async (_e, { roomId, audioOnly, isDM }) => {
         if (!currentUserId) {
             const self = (await assertClient().getSelf()) as any;
             currentUserId = self?.id;
@@ -444,6 +462,7 @@ function setupIPC() {
                 success: true,
                 ssrc: voiceClient.getSSRC(),
                 videoSsrc: voiceClient.getVideoSSRC(),
+                screenSsrc: voiceClient.getScreenSSRC(),
                 sessionId: voiceClient.getSessionId(),
                 participants: welcomeParticipants,
                 participantCount: welcomeParticipants.length,
@@ -468,10 +487,18 @@ function setupIPC() {
             if (currentVoiceRoomId && currentVoiceRoomId !== roomId) {
                 try {
                     await assertClient().leaveVoice(currentVoiceRoomId);
+                    await assertClient().leaveDMCall(currentVoiceRoomId);
                 } catch {}
             }
 
-            const response = (await assertClient().joinVoice(roomId, !!audioOnly)) as any;
+            let response: any;
+            if (isDM) {
+                console.log('[Main] Joining DM call:', roomId);
+                response = await assertClient().joinDMCall(roomId, !!audioOnly);
+            } else {
+                console.log('[Main] Joining Room voice:', roomId);
+                response = await assertClient().joinVoice(roomId, !!audioOnly);
+            }
 
             const toUint8Array = (data: any): Uint8Array => {
                 if (data instanceof Uint8Array) return data;
@@ -543,6 +570,7 @@ function setupIPC() {
                 success: true,
                 ssrc: voiceClient.getSSRC(),
                 videoSsrc: voiceClient.getVideoSSRC(),
+                screenSsrc: voiceClient.getScreenSSRC(),
                 sessionId: voiceClient.getSessionId(),
                 participants: welcomeParticipants,
                 participantCount: welcomeParticipants.length,
@@ -557,7 +585,7 @@ function setupIPC() {
         }
     });
 
-    handleIpc("voice:leave", async (_e, { roomId }) => {
+    handleIpc("voice:leave", async (_e, { roomId }: { roomId?: string }) => {
         const targetRoom = roomId || currentVoiceRoomId;
 
         if (voiceClient) {
@@ -566,14 +594,15 @@ function setupIPC() {
             voiceClient = null;
         }
 
-        if (targetRoom) {
-            try {
-                await assertClient().leaveVoice(targetRoom);
-            } catch {}
-        }
-
         currentVoiceRoomId = null;
-        currentVoiceAudioOnly = null;
+        currentVoiceAudioOnly = false;
+
+        if (targetRoom) {
+            await Promise.allSettled([
+                assertClient().leaveVoice(targetRoom),
+                assertClient().leaveDMCall(targetRoom),
+            ]);
+        }
 
         return { success: true };
     });
@@ -586,17 +615,38 @@ function setupIPC() {
 
     ipcMain.on(
         'voice:sendVideo',
-        (_e, payload: { data: Uint8Array | ArrayBuffer; isKeyframe?: boolean }) => {
+        (_e, payload: {
+            data: Uint8Array | ArrayBuffer | number[] | { [key: string]: number };
+            isKeyframe?: boolean;
+            source?: 'camera' | 'screen';
+        }) => {
             if (!voiceClient || !voiceClient.isConnected()) return;
 
-            const u8 =
-                payload.data instanceof ArrayBuffer
-                    ? new Uint8Array(payload.data)
-                    : payload.data;
+            let u8: Uint8Array;
+            const data = payload.data;
 
-            voiceClient.sendVideo(Buffer.from(u8), !!payload.isKeyframe);
+            if (data instanceof Uint8Array) {
+                u8 = data;
+            } else if (data instanceof ArrayBuffer) {
+                u8 = new Uint8Array(data);
+            } else if (Array.isArray(data)) {
+                u8 = new Uint8Array(data);
+            } else {
+                return;
+            }
+
+            if (u8.length === 0) return;
+
+            voiceClient.sendVideo(Buffer.from(u8), !!payload.isKeyframe, payload.source || 'camera');
         }
     );
+
+    handleIpc('voice:subscriptions', async (_e, ssrcs) => {
+        if (voiceClient?.isConnected()) {
+            voiceClient.setSubscriptions(ssrcs);
+        }
+        return { success: true };
+    });
 
     handleIpc('voice:setSpeaking', async (_e, { speaking }) => {
         if (voiceClient?.isConnected()) {
@@ -624,18 +674,16 @@ function setupIPC() {
         }
     });
 
-    handleIpc('voice:setMediaState', async (_e, { muted, videoEnabled }) => {
+    handleIpc('voice:setMediaState', async (_e, { muted, videoEnabled, screenSharing }) => {
         if (voiceClient?.isConnected()) {
-            voiceClient.setMediaState(muted, videoEnabled);
+            voiceClient.setMediaState(muted, videoEnabled, screenSharing);
         }
         return { success: true };
     });
 
-    handleIpc('voice:setMediaPrefs', async (_e, { roomId, audioOnly, videoEnabled, muted }) => {
-        if (voiceClient?.isConnected()) {
-            voiceClient.setMediaState(muted, videoEnabled);
-        }
-        return assertClient().setMediaPrefs(roomId, audioOnly, videoEnabled, muted);
+    handleIpc('voice:setMediaPrefs', async (_e, { roomId, audioOnly, videoEnabled, muted, screenSharing }) => {
+        // Voice client state is updated via voice:setMediaState explicitly by the renderer
+        return assertClient().setMediaPrefs(roomId, audioOnly, videoEnabled, muted, !!screenSharing);
     });
 
     // Friends
@@ -676,27 +724,21 @@ function setupIPC() {
     console.log('\x1b[33m[IPC] All handlers registered\x1b[0m');
 }
 
+
+
 app.whenReady().then(() => {
     console.log('\x1b[33m[APP] Starting Concord Client...\x1b[0m');
     setupIPC();
     createWindow();
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
+    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
-});
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 app.on('before-quit', () => {
     console.log('\x1b[33m[APP] Shutting down...\x1b[0m');
     if (keepaliveInterval) clearInterval(keepaliveInterval);
     if (currentStream) { currentStream.end(); currentStream = null; }
-    if (voiceClient) {
-        voiceClient.disconnect();
-        voiceClient.removeAllListeners();
-        voiceClient = null;
-    }
+    if (voiceClient) { voiceClient.disconnect(); voiceClient = null; }
     streamInitialized = false;
 });

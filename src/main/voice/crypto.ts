@@ -5,6 +5,7 @@ const NONCE_BASE_SIZE = 4;
 const KEY_SIZE = 32;
 const AUTH_TAG_SIZE = 16;
 const REPLAY_WINDOW = 256;
+const DEBUG_CRYPTO = false;
 
 type NonceBaseKey = string;
 
@@ -26,19 +27,18 @@ function hkdfNonceBase(
     ]);
     info.writeUInt32BE(ssrc >>> 0, info.length - 4);
 
-    // salt = empty; ok because input key is already random
     const ab = crypto.hkdfSync("sha256", keyMaterial, Buffer.alloc(0), info, NONCE_BASE_SIZE);
     return Buffer.from(ab);
 }
 
-
 export class KeyRing {
     private readonly roomId: string;
-    private keys = new Map<number, Buffer>(); // keyId -> keyMaterial
-    private nonceBaseCache = new Map<NonceBaseKey, Buffer>(); // (keyId,ssrc)->nonceBase
+    private keys = new Map<number, Buffer>();
+    private nonceBaseCache = new Map<NonceBaseKey, Buffer>();
 
     constructor(roomId: string) {
         this.roomId = roomId;
+        if (DEBUG_CRYPTO) console.log(`[KeyRing] Created for room: ${roomId}`);
     }
 
     setKey(keyId: number, keyMaterial: Uint8Array): void {
@@ -47,40 +47,44 @@ export class KeyRing {
             throw new Error(`Invalid key size: ${km.length}, expected ${KEY_SIZE}`);
         }
         this.keys.set(keyId & 0xff, km);
-        // keep cache; nonceBase includes keyId+keyMaterial, but keyMaterial changed -> clear relevant entries
+        if (DEBUG_CRYPTO) {
+            console.log(`[KeyRing] Set key: keyId=${keyId & 0xff}, keyLen=${km.length}`);
+        }
         for (const k of Array.from(this.nonceBaseCache.keys())) {
             if (k.startsWith(`${keyId & 0xff}:`)) this.nonceBaseCache.delete(k);
         }
     }
 
-    hasKey(keyId: number): boolean {
-        return this.keys.has(keyId & 0xff);
-    }
-
-    private getKeyMaterial(keyId: number): Buffer {
+    getKeyMaterial(keyId: number): Buffer {
         const km = this.keys.get(keyId & 0xff);
-        if (!km) throw new Error(`Missing key for keyId=${keyId & 0xff}`);
+        if (!km) {
+            throw new Error(`No key for keyId=${keyId & 0xff}`);
+        }
         return km;
     }
 
-    private getNonceBase(keyId: number, ssrc: number): Buffer {
-        const k = nbKey(keyId, ssrc);
-        const cached = this.nonceBaseCache.get(k);
-        if (cached) return cached;
-
-        const km = this.getKeyMaterial(keyId);
-        const nb = hkdfNonceBase(km, this.roomId, ssrc, keyId);
-        this.nonceBaseCache.set(k, nb);
+    getNonceBase(keyId: number, ssrc: number): Buffer {
+        const key = nbKey(keyId, ssrc);
+        let nb = this.nonceBaseCache.get(key);
+        if (!nb) {
+            const km = this.getKeyMaterial(keyId);
+            nb = hkdfNonceBase(km, this.roomId, ssrc, keyId);
+            this.nonceBaseCache.set(key, nb);
+        }
         return nb;
+    }
+
+    private deriveNonce(nonceBase: Buffer, counter: bigint): Buffer {
+        const nonce = Buffer.alloc(NONCE_SIZE);
+        nonceBase.copy(nonce, 0);
+        nonce.writeBigUInt64BE(counter, NONCE_BASE_SIZE);
+        return nonce;
     }
 
     seal(aad: Buffer, plaintext: Buffer, keyId: number, ssrc: number, counter: bigint): Buffer {
         const km = this.getKeyMaterial(keyId);
         const nonceBase = this.getNonceBase(keyId, ssrc);
-
-        const nonce = Buffer.alloc(NONCE_SIZE);
-        nonceBase.copy(nonce, 0);
-        nonce.writeBigUInt64BE(counter, NONCE_BASE_SIZE);
+        const nonce = this.deriveNonce(nonceBase, counter);
 
         const cipher = crypto.createCipheriv("aes-256-gcm", km, nonce);
         cipher.setAAD(aad);
@@ -92,14 +96,21 @@ export class KeyRing {
     }
 
     open(aad: Buffer, ciphertext: Buffer, keyId: number, ssrc: number, counter: bigint): Buffer | null {
-        if (ciphertext.length < AUTH_TAG_SIZE) return null;
+        if (ciphertext.length < AUTH_TAG_SIZE) {
+            if (DEBUG_CRYPTO) console.log(`[KeyRing] Ciphertext too short: ${ciphertext.length}`);
+            return null;
+        }
 
-        const km = this.getKeyMaterial(keyId);
+        let km: Buffer;
+        try {
+            km = this.getKeyMaterial(keyId);
+        } catch (e) {
+            if (DEBUG_CRYPTO) console.error(`[KeyRing] No key for keyId=${keyId & 0xff}`);
+            return null;
+        }
+
         const nonceBase = this.getNonceBase(keyId, ssrc);
-
-        const nonce = Buffer.alloc(NONCE_SIZE);
-        nonceBase.copy(nonce, 0);
-        nonce.writeBigUInt64BE(counter, NONCE_BASE_SIZE);
+        const nonce = this.deriveNonce(nonceBase, counter);
 
         const enc = ciphertext.subarray(0, ciphertext.length - AUTH_TAG_SIZE);
         const tag = ciphertext.subarray(ciphertext.length - AUTH_TAG_SIZE);
@@ -109,7 +120,10 @@ export class KeyRing {
             decipher.setAAD(aad);
             decipher.setAuthTag(tag);
             return Buffer.concat([decipher.update(enc), decipher.final()]);
-        } catch {
+        } catch (e) {
+            if (DEBUG_CRYPTO) {
+                console.error(`[KeyRing] Decrypt failed: keyId=${keyId}, ssrc=${ssrc}, counter=${counter}`);
+            }
             return null;
         }
     }
