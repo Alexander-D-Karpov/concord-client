@@ -5,6 +5,7 @@ import { useDMStore } from '../hooks/useDMStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 import { useNotificationStore } from '../hooks/useNotificationStore';
 import { useDMCallStore } from '../hooks/useDMCallStore';
+import { useTypingStore } from '../hooks/useTypingStore';
 import MessageAttachment from './MessageAttachment';
 
 const tsToIso = (ts: any): string => {
@@ -19,22 +20,66 @@ const DMChat: React.FC = () => {
     const [sending, setSending] = useState(false);
     const { markAsRead, clearUnread } = useNotificationStore();
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const initialLoadRef = useRef(true);
     const { active: callActive, channelId: activeCallChannelId } = useDMCallStore();
+    const typingUsers = useTypingStore(state => currentChannelId ? state.getTypingUsers(currentChannelId) : new Set<string>());
+
+    const isTypingRef = useRef(false);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const currentChannel = channels.find(ch => ch.channel.id === currentChannelId);
     const channelMessages = currentChannelId ? messages[currentChannelId] || [] : [];
 
-    const scrollToBottom = useCallback(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, []);
+    const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+        messagesEndRef.current?.scrollIntoView({ behavior });
+    };
+
+    const isNearBottom = () => {
+        const el = scrollContainerRef.current;
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    };
 
     useEffect(() => {
-        if (currentChannelId) loadMessages(currentChannelId);
+        if (currentChannelId) {
+            initialLoadRef.current = true;
+            loadMessages(currentChannelId);
+        }
     }, [currentChannelId, loadMessages]);
 
     useEffect(() => {
-        scrollToBottom();
-    }, [channelMessages.length, scrollToBottom]);
+        if (!currentChannelId || channelMessages.length === 0) return;
+
+        if (initialLoadRef.current) {
+            initialLoadRef.current = false;
+            const lastReadId = useNotificationStore.getState().getLastRead('dm', currentChannelId);
+
+            if (lastReadId) {
+                const lastReadIndex = channelMessages.findIndex(m => m.id === lastReadId);
+                const hasUnread = lastReadIndex >= 0 && lastReadIndex < channelMessages.length - 1;
+
+                if (hasUnread) {
+                    const nextMsg = channelMessages[lastReadIndex + 1];
+                    if (nextMsg) {
+                        requestAnimationFrame(() => {
+                            const el = document.getElementById(`dm-msg-${nextMsg.id}`);
+                            if (el) {
+                                el.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                el.classList.add('bg-primary-900/20');
+                                setTimeout(() => el.classList.remove('bg-primary-900/20'), 1500);
+                            }
+                        });
+                        return;
+                    }
+                }
+            }
+            requestAnimationFrame(() => scrollToBottom('instant'));
+            return;
+        }
+
+        if (isNearBottom()) scrollToBottom();
+    }, [channelMessages.length, currentChannelId]);
 
     useEffect(() => {
         if (!currentChannelId || channelMessages.length === 0) return;
@@ -49,9 +94,44 @@ const DMChat: React.FC = () => {
         clearUnread('dm', currentChannelId);
     }, [currentChannelId, channelMessages, markAsRead, clearUnread]);
 
+    useEffect(() => {
+        return () => {
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!currentChannelId || channelMessages.length === 0) return;
+
+        const lastMessage = channelMessages[channelMessages.length - 1];
+        if (!lastMessage || lastMessage.id.startsWith('temp-')) return;
+
+        window.concord.markDMAsRead(currentChannelId, lastMessage.id).catch(() => {});
+    }, [currentChannelId, channelMessages]);
+
+    const handleTyping = () => {
+        if (!currentChannelId) return;
+
+        if (!isTypingRef.current) {
+            isTypingRef.current = true;
+            window.concord.startDMTyping(currentChannelId).catch(console.error);
+        }
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+        typingTimeoutRef.current = setTimeout(() => {
+            isTypingRef.current = false;
+            window.concord.stopDMTyping(currentChannelId).catch(console.error);
+        }, 3000);
+    };
+
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newMessage.trim() || !currentChannelId || sending) return;
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        isTypingRef.current = false;
+        window.concord.stopDMTyping(currentChannelId).catch(console.error);
 
         const content = newMessage.trim();
         setNewMessage('');
@@ -152,7 +232,7 @@ const DMChat: React.FC = () => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
                 {channelMessages.length === 0 ? (
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center">
@@ -175,7 +255,8 @@ const DMChat: React.FC = () => {
                         return (
                             <div
                                 key={msg.id}
-                                className={`flex ${isOwn ? 'justify-end' : 'justify-start'} ${isOptimistic ? 'opacity-60' : ''}`}
+                                id={`dm-msg-${msg.id}`}
+                                className={`flex transition-colors duration-1000 ${isOwn ? 'justify-end' : 'justify-start'} ${isOptimistic ? 'opacity-60' : ''}`}
                             >
                                 <div className={`max-w-[70%]`}>
                                     <div className={`px-4 py-2 rounded-2xl ${
@@ -204,6 +285,14 @@ const DMChat: React.FC = () => {
                 <div ref={messagesEndRef} />
             </div>
 
+            {currentChannelId && typingUsers.size > 0 && Array.from(typingUsers).some(id => id !== user?.id) && (
+                <div className="px-4 py-1 flex-shrink-0">
+                    <span className="text-xs text-dark-400 italic animate-pulse">
+                        {otherUser.displayName} is typing...
+                    </span>
+                </div>
+            )}
+
             {showVoiceControls ? (
                 <VoiceControls roomId={currentChannelId} isDM={true} />
             ) : (
@@ -215,7 +304,7 @@ const DMChat: React.FC = () => {
                     <input
                         type="text"
                         value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
+                        onChange={(e) => { setNewMessage(e.target.value); handleTyping(); }}
                         placeholder={`Message @${currentChannel.otherUserHandle}`}
                         className="flex-1 px-4 py-3 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />

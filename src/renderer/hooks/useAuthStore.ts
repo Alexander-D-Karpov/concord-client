@@ -6,6 +6,7 @@ interface User {
     handle: string;
     displayName?: string;
     avatarUrl?: string;
+    avatarThumbnailUrl?: string;
 }
 
 interface AuthTokens {
@@ -22,7 +23,7 @@ interface AuthState {
     isInitializing: boolean;
     refreshTimeout: NodeJS.Timeout | null;
     setTokens: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<void>;
-    setUser: (user: User) => void;
+    setUser: (user: Partial<User> & { id: string }) => void;
     clearTokens: () => void;
     logout: () => void;
     startTokenRefresh: () => void;
@@ -82,9 +83,14 @@ export const useAuthStore = create<AuthState>()(
                 await initializationPromise;
             },
 
-            setUser: (user: User) => {
-                set({ user });
-            },
+            setUser: (userData) => set((state) => ({
+                user: {
+                    ...state.user,
+                    ...Object.fromEntries(
+                        Object.entries(userData).filter(([_, v]) => v !== undefined && v !== '')
+                    ),
+                } as User,
+            })),
 
             clearTokens: () => {
                 get().stopTokenRefresh();

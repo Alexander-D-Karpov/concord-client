@@ -6,6 +6,7 @@ import { useUsersStore } from './useUsersStore';
 import { useNotifications } from './useNotifications';
 import { useNotificationStore } from './useNotificationStore';
 import { useDMStore, DMMessage } from './useDMStore';
+import { useTypingStore } from './useTypingStore';
 import { Message, Member, MessageReaction, Room, RoomInvite } from '../types';
 
 const tsToIso = (ts: any): string => {
@@ -53,6 +54,7 @@ const mapMember = (m: any): Member => ({
     joinedAt: tsToIso(m.joined_at),
     nickname: m.nickname,
     status: m.status || 'offline',
+    lastReadMessageId: m.last_read_message_id ? String(m.last_read_message_id) : undefined,
 });
 
 const mapRoom = (r: any): Room => ({
@@ -95,6 +97,7 @@ const mapRoomInvite = (i: any): RoomInvite => ({
 export const useEventStream = () => {
     const setMembers = useRoomsStore(state => state.setMembers);
     const updateRoomInStore = useRoomsStore(state => state.updateRoom);
+    const updateMemberReadStatus = useRoomsStore(state => state.updateMemberReadStatus);
     const setRoomInvites = useRoomsStore(state => state.setRoomInvites);
 
     const addMessage = useMessagesStore(state => state.addMessage);
@@ -116,6 +119,7 @@ export const useEventStream = () => {
     const setLastRead = useNotificationStore(state => state.setLastRead);
 
     const addDMMessage = useDMStore(state => state.addMessage);
+    const setTyping = useTypingStore(state => state.setTyping);
 
     const refreshRoomMembers = useCallback(async (roomId: string) => {
         try {
@@ -123,13 +127,6 @@ export const useEventStream = () => {
             setMembers(roomId, (res?.members || []).map(mapMember));
         } catch {}
     }, [setMembers]);
-
-    const debouncedNotifyMessage = useCallback(
-        debounce((msg: Parameters<typeof notifyMessage>[0]) => {
-            notifyMessage(msg);
-        }, 100),
-        [notifyMessage]
-    );
 
     const handleEvent = useCallback((raw: any) => {
         if (!raw) return;
@@ -140,11 +137,12 @@ export const useEventStream = () => {
             const msg = mapMessage(p.message_created.message);
             addMessage(msg.roomId, msg);
 
-            const currentRooms = useRoomsStore.getState().rooms;
-            const room = currentRooms.find(r => r.id === msg.roomId);
-            const author = getUser(msg.authorId);
+            const { fetchUser } = useUsersStore.getState();
+            fetchUser(msg.authorId).then(() => {
+                const author = useUsersStore.getState().getUser(msg.authorId);
+                const currentRooms = useRoomsStore.getState().rooms;
+                const room = currentRooms.find(r => r.id === msg.roomId);
 
-            setTimeout(() => {
                 notifyMessage({
                     roomId: msg.roomId,
                     roomName: room?.name || 'Unknown',
@@ -153,7 +151,7 @@ export const useEventStream = () => {
                     content: msg.content,
                     mentions: msg.mentions,
                 });
-            }, 0);
+            });
             return;
         }
 
@@ -282,12 +280,15 @@ export const useEventStream = () => {
             };
             addDMMessage(channelId, dmMessage);
 
-            const author = getUser(msg.author_id);
-            notifyDM({
-                channelId: channelId,
-                authorId: msg.author_id,
-                authorName: author?.displayName || author?.handle || 'Unknown',
-                content: msg.content,
+            const { fetchUser } = useUsersStore.getState();
+            fetchUser(msg.author_id).then(() => {
+                const author = useUsersStore.getState().getUser(msg.author_id);
+                notifyDM({
+                    channelId: channelId,
+                    authorId: msg.author_id,
+                    authorName: author?.displayName || author?.handle || 'Unknown',
+                    content: msg.content,
+                });
             });
             return;
         }
@@ -326,9 +327,31 @@ export const useEventStream = () => {
         }
 
         if (p.message_read) {
-            const { room_id, channel_id, message_id } = p.message_read;
-            if (room_id && message_id) setLastRead('room', room_id, message_id);
-            if (channel_id && message_id) setLastRead('dm', channel_id, message_id);
+            const { room_id, channel_id, message_id, user_id } = p.message_read;
+            if (room_id && message_id) {
+                setLastRead('room', room_id, message_id);
+                // Update local member state for read tracking
+                if (user_id) {
+                    updateMemberReadStatus(room_id, user_id, message_id);
+                }
+            }
+            if (channel_id && message_id) {
+                setLastRead('dm', channel_id, message_id);
+            }
+            return;
+        }
+
+        if (p.typing_started) {
+            const { user_id, room_id, channel_id } = p.typing_started;
+            if (room_id) setTyping(room_id, user_id, true);
+            if (channel_id) setTyping(channel_id, user_id, true);
+            return;
+        }
+
+        if (p.typing_stopped) {
+            const { user_id, room_id, channel_id } = p.typing_stopped;
+            if (room_id) setTyping(room_id, user_id, false);
+            if (channel_id) setTyping(channel_id, user_id, false);
             return;
         }
 
@@ -336,7 +359,7 @@ export const useEventStream = () => {
         addMessage, updateMessage, deleteMessage, addReaction, removeReaction, setPinned,
         refreshRoomMembers, updateRoomInStore, setUser, getUser, loadFriends, loadPendingRequests,
         notifyMessage, notifyDM, notifyFriendRequest, notifyCall, setUnread, setLastRead, addDMMessage,
-        setRoomInvites
+        setRoomInvites, setTyping, updateMemberReadStatus
     ]);
 
     useEffect(() => {

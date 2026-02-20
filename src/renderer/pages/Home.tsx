@@ -42,6 +42,7 @@ const Home: React.FC = () => {
                         handle: userInfo.handle,
                         displayName: userInfo.display_name,
                         avatarUrl: userInfo.avatar_url,
+                        avatarThumbnailUrl: userInfo.avatar_thumbnail_url,
                     });
                 }
 

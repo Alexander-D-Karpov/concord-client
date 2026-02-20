@@ -29,6 +29,10 @@ export interface ServerEventPayload {
     friend_request_created?: { request: ProtoFriendRequest };
     friend_request_updated?: { request: ProtoFriendRequest };
     friend_removed?: { user_id: string };
+    typing_started?: { user_id: string; room_id?: string; channel_id?: string; user_display_name?: string; expires_at?: ProtoTimestamp };
+    typing_stopped?: { user_id: string; room_id?: string; channel_id?: string };
+    user_status_changed?: { user_id: string; status: string };
+    profile_updated?: { user_id: string; display_name?: string; avatar_url?: string; status?: string; bio?: string };
 }
 
 export interface ServerEvent {

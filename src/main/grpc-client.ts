@@ -272,6 +272,14 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.chatClient, 'SendMessage', request, true, attachments?.length ? 60 : 30));
     }
 
+    async startTyping(roomId: string) {
+        return this.withAuth(() => this.promisify(this.chatClient, 'StartTyping', { room_id: roomId }, true));
+    }
+
+    async stopTyping(roomId: string) {
+        return this.withAuth(() => this.promisify(this.chatClient, 'StopTyping', { room_id: roomId }, true));
+    }
+
     async editMessage(messageId: string, content: string) {
         return this.withAuth(() => this.promisify(this.chatClient, 'EditMessage', { message_id: messageId, content }, true));
     }
@@ -402,7 +410,7 @@ class ConcordClient {
         return this.withAuth(() => this.promisify(this.adminClient, 'Mute', { room_id: roomId, user_id: userId, muted }, true));
     }
 
-    // DM - using correct proto method names
+    // DM
     async getOrCreateDM(userId: string) {
         return this.withAuth(() => this.promisify(this.dmClient, 'CreateDM', { user_id: userId }, true));
     }
@@ -419,6 +427,14 @@ class ConcordClient {
         const request: any = { channel_id: channelId, content };
         if (replyToId) request.reply_to_id = replyToId;
         return this.withAuth(() => this.promisify(this.dmClient, 'SendDM', request, true));
+    }
+
+    async startDMTyping(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'StartDMTyping', { channel_id: channelId }, true));
+    }
+
+    async stopDMTyping(channelId: string) {
+        return this.withAuth(() => this.promisify(this.dmClient, 'StopDMTyping', { channel_id: channelId }, true));
     }
 
     async editDMMessage(channelId: string, messageId: string, content: string) {
@@ -477,6 +493,22 @@ class ConcordClient {
         } catch (_err) {
             return { active: false, participants: [] };
         }
+    }
+
+    // Avatar
+    async uploadAvatar(imageData: Uint8Array, filename: string) {
+        return this.withAuth(() => this.promisify(this.usersClient, 'UploadAvatar', {
+            image_data: Buffer.from(imageData),
+            filename
+        }, true, 60));
+    }
+
+    async deleteAvatar(avatarId: string) {
+        return this.withAuth(() => this.promisify(this.usersClient, 'DeleteAvatar', { avatar_id: avatarId }, true));
+    }
+
+    async getAvatarHistory(userId: string) {
+        return this.withAuth(() => this.promisify(this.usersClient, 'GetAvatarHistory', { user_id: userId }, true));
     }
 }
 

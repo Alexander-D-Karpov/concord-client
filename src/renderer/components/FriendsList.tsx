@@ -4,6 +4,7 @@ import { useFriendsStore } from '../hooks/useFriendsStore';
 import { useDMStore } from '../hooks/useDMStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 import { Friend, FriendRequest } from '../types';
+import Avatar from "@/components/Avatar";
 
 type Tab = 'all' | 'pending' | 'blocked' | 'add';
 
@@ -370,10 +371,7 @@ const FriendCard: React.FC<{
                 className="flex items-center space-x-3 flex-1 text-left"
             >
                 <div className="relative">
-                    <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
-                        {friend.displayName[0].toUpperCase()}
-                    </div>
-                    <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-dark-800 ${getStatusColor(friend.status)}`} />
+                    <Avatar userId={friend.userId} src={friend.avatarUrl} size="md" status={friend.status} showStatus />
                 </div>
                 <div>
                     <div className="font-semibold text-white">{friend.displayName}</div>
@@ -435,9 +433,7 @@ const IncomingRequestCard: React.FC<{
         <div className="p-4 bg-dark-800 rounded-lg">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
-                        {request.fromDisplayName[0].toUpperCase()}
-                    </div>
+                    <Avatar name={request.fromDisplayName} src={request.fromAvatarUrl} size="md" showStatus={false} />
                     <div>
                         <div className="font-semibold text-white">{request.fromDisplayName}</div>
                         <div className="text-sm text-dark-400">@{request.fromHandle}</div>
@@ -476,9 +472,7 @@ const OutgoingRequestCard: React.FC<{
         <div className="p-4 bg-dark-800 rounded-lg">
             <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold">
-                        {request.toDisplayName[0].toUpperCase()}
-                    </div>
+                    <Avatar name={request.toDisplayName} src={request.toAvatarUrl} size="md" showStatus={false} />
                     <div>
                         <div className="font-semibold text-white">{request.toDisplayName}</div>
                         <div className="text-sm text-dark-400">@{request.toHandle}</div>
@@ -504,11 +498,7 @@ const BlockedUserCard: React.FC<{
     return (
         <div className="p-4 bg-dark-800 rounded-lg flex items-center justify-between">
             <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-full bg-dark-700 flex items-center justify-center text-dark-400">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                    </svg>
-                </div>
+                <Avatar name={userId} size="md" showStatus={false} />
                 <div className="text-dark-400">{userId}</div>
             </div>
             <button

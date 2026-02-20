@@ -11,6 +11,7 @@ import InviteMemberModal from './InviteMemberModal';
 import DMList from './DMList';
 import { RoomInvite } from '../types';
 import Modal from './Modal';
+import Avatar from "@/components/Avatar";
 
 type SidebarTab = 'rooms' | 'dms';
 
@@ -262,9 +263,7 @@ const Sidebar: React.FC = () => {
         <div className="w-64 bg-dark-800 flex flex-col border-r border-dark-700 overflow-hidden h-screen">
             <div className="p-4 border-b border-dark-700 flex-shrink-0">
                 <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-semibold flex-shrink-0">
-                        {user?.displayName?.[0]?.toUpperCase() || user?.handle?.[0]?.toUpperCase() || '?'}
-                    </div>
+                    <Avatar userId={user?.id} name={user?.displayName || user?.handle} size="md" showStatus={false} />
                     <div className="flex-1 min-w-0">
                         <div className="text-white font-medium truncate text-sm">
                             {user?.displayName || user?.handle || 'User'}
@@ -371,15 +370,10 @@ const Sidebar: React.FC = () => {
                                     className="w-full px-3 py-2 rounded-lg text-left transition hover:bg-dark-700 flex items-center space-x-2"
                                 >
                                     <div className="relative">
-                                        <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
-                                            <span className="text-white font-semibold text-xs">
-                                                {getFriendDisplayName(friend.userId).charAt(0).toUpperCase()}
-                                            </span>
-                                        </div>
-                                        <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-dark-800 ${getStatusColor(friend.status)}`}></div>
+                                        <Avatar userId={friend.userId} src={friend.avatarUrl} name={friend.displayName || friend.handle} size="sm" status={friend.status} showStatus />
                                     </div>
                                     <span className="truncate text-sm text-white">
-                                        {getFriendDisplayName(friend.userId)}
+                                        {friend.displayName || friend.handle}
                                     </span>
                                 </button>
                             ))}

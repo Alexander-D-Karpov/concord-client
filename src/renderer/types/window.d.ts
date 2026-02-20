@@ -23,6 +23,13 @@ declare global {
             listUsersByIds(userIds: string[]): Promise<{ users: any[] }>;
             updateProfile(displayName?: string, avatarUrl?: string, bio?: string): Promise<any>;
             updateStatus(status: string): Promise<any>;
+            uploadAvatar(imageData: ArrayBuffer, filename: string): Promise<{
+                avatar_url: string;
+                thumbnail_url: string;
+                avatar: any;
+            }>;
+            deleteAvatar(avatarId: string): Promise<any>;
+            getAvatarHistory(userId: string): Promise<{ avatars: any[] }>;
 
             // Rooms
             getRooms(): Promise<{ rooms: any[] }>;
@@ -55,6 +62,8 @@ declare global {
             removeReaction(messageId: string, emoji: string): Promise<any>;
             searchMessages(roomId: string, query: string, limit?: number): Promise<any>;
             getThread(messageId: string, limit?: number, cursor?: string): Promise<any>;
+            startTyping(roomId: string): Promise<any>;
+            stopTyping(roomId: string): Promise<any>;
 
             // Stream
             startEventStream(): Promise<{ success: boolean }>;
@@ -117,6 +126,8 @@ declare global {
             leaveDMCall(channelId: string): Promise<any>;
             endDMCall(channelId: string): Promise<any>;
             getDMCallStatus(channelId: string): Promise<any>;
+            startDMTyping(channelId: string): Promise<any>;
+            stopDMTyping(channelId: string): Promise<any>;
 
             // Read tracking
             markAsRead?: (roomId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;

@@ -4,6 +4,8 @@ import { useSettingsStore } from '../hooks/useSettingsStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 import { useNotificationStore } from '../hooks/useNotificationStore';
 import SoundSettings from '../components/SoundSettings';
+import AvatarUpload from "@/components/AvatarUpload";
+import AvatarHistoryModal from "@/components/AvatarHistoryModal";
 
 const Settings: React.FC = () => {
     const navigate = useNavigate();
@@ -15,6 +17,7 @@ const Settings: React.FC = () => {
         bio: '',
     });
     const [saving, setSaving] = useState(false);
+    const [showAvatarHistory, setShowAvatarHistory] = useState(false);
     const { settings: notifSettings, updateSettings: updateNotifSettings } = useNotificationStore();
 
     const handleLogout = () => {
@@ -63,6 +66,17 @@ const Settings: React.FC = () => {
                     <div className="bg-dark-800 rounded-lg p-4 sm:p-6 border border-dark-700">
                         <h2 className="text-xl font-semibold text-white mb-4">Profile</h2>
                         <div className="space-y-4">
+                            <div className="flex items-center justify-between mb-4">
+                                <AvatarUpload />
+                                {user?.id && (
+                                    <button
+                                        onClick={() => setShowAvatarHistory(true)}
+                                        className="text-sm text-primary-400 hover:text-primary-300 transition"
+                                    >
+                                        View avatar history
+                                    </button>
+                                )}
+                            </div>
                             <div>
                                 <label className="block text-sm font-medium text-dark-300 mb-2">
                                     Display Name
@@ -353,7 +367,13 @@ const Settings: React.FC = () => {
                     </div>
                 </div>
             </div>
-
+            {showAvatarHistory && user?.id && (
+                <AvatarHistoryModal
+                    userId={user.id}
+                    displayName={user.displayName || user.handle || 'You'}
+                    onClose={() => setShowAvatarHistory(false)}
+                />
+            )}
             {showResetConfirm && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-dark-800 p-6 rounded-lg w-full max-w-md border border-dark-700">

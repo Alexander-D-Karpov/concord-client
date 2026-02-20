@@ -12,6 +12,7 @@ interface RoomsState {
     removeRoom: (roomId: string) => void;
     setCurrentRoom: (roomId: string | null) => void;
     setMembers: (roomId: string, members: Member[]) => void;
+    updateMemberReadStatus: (roomId: string, userId: string, messageId: string) => void;
     setRoomInvites: (invites: RoomInvite[]) => void;
 }
 
@@ -40,6 +41,18 @@ export const useRoomsStore = create<RoomsState>((set) => ({
 
     setMembers: (roomId, members) =>
         set((state) => ({ members: { ...state.members, [roomId]: members } })),
+
+    updateMemberReadStatus: (roomId, userId, messageId) => set((state) => {
+        const roomMembers = state.members[roomId] || [];
+        return {
+            members: {
+                ...state.members,
+                [roomId]: roomMembers.map(m =>
+                    m.userId === userId ? { ...m, lastReadMessageId: messageId } : m
+                )
+            }
+        };
+    }),
 
     setRoomInvites: (invites) => set({ roomInvites: invites }),
 }));

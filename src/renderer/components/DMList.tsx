@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useDMStore } from '../hooks/useDMStore';
 import UnreadBadge from './UnreadBadge';
 import { useNotificationStore } from '../hooks/useNotificationStore';
+import Avatar from "@/components/Avatar";
 
 interface DMListProps {
     onSelectDM?: (channelId: string) => void;
@@ -69,16 +70,14 @@ const DMList: React.FC<DMListProps> = ({ onSelectDM }) => {
                             : 'text-dark-300 hover:bg-dark-700 hover:text-white'
                     }`}
                 >
-                    <div className="relative flex-shrink-0">
-                        <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center">
-                            <span className="text-white font-semibold text-xs">
-                                {getInitial(ch)}
-                            </span>
-                        </div>
-                        <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 ${
-                            currentChannelId === ch.channel.id ? 'border-primary-600' : 'border-dark-800'
-                        } ${getStatusColor(ch.otherUserStatus)}`} />
-                    </div>
+                    <Avatar
+                        userId={ch.otherUserId}
+                        src={ch.otherUserAvatar}
+                        name={getDisplayName(ch)}
+                        size="sm"
+                        status={ch.otherUserStatus}
+                        showStatus
+                    />
                     <div className="flex-1 min-w-0">
                         <div className="truncate text-sm font-medium">
                             {getDisplayName(ch)}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
+import Avatar from "@/components/Avatar";
 
 interface User {
     id: string;
@@ -104,11 +105,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({ roomId, onClose, 
                                     className="flex items-center justify-between p-3 bg-dark-700 hover:bg-dark-600 rounded-lg transition"
                                 >
                                     <div className="flex items-center space-x-3 flex-1 min-w-0">
-                                        <div className="w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center flex-shrink-0">
-                                            <span className="text-white font-semibold">
-                                                {(user.displayName || user.handle).charAt(0).toUpperCase()}
-                                            </span>
-                                        </div>
+                                        <Avatar name={user.displayName || user.handle} src={user.avatarUrl} size="md" showStatus={false} />
                                         <div className="flex-1 min-w-0">
                                             <div className="text-white font-medium truncate">
                                                 {user.displayName || user.handle}

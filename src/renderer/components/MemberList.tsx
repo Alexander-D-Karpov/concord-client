@@ -4,6 +4,7 @@ import { useAuthStore } from '../hooks/useAuthStore';
 import { useUsersStore } from '../hooks/useUsersStore';
 import { Member } from '../types';
 import InviteMemberModal from './InviteMemberModal';
+import Avatar from "@/components/Avatar";
 
 const roleLabels: Record<string, string> = {
     'ROLE_ADMIN': 'Admin',
@@ -194,13 +195,9 @@ const MemberList: React.FC = () => {
                         sortedMembers.map((member) => (
                             <div
                                 key={member.userId}
-                                className="flex items-center px-3 py-2 rounded-lg hover:bg-dark-700 transition"
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-dark-700 transition"
                             >
-                                <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center mr-3 flex-shrink-0">
-                                    <span className="text-white font-semibold text-xs">
-                                        {getDisplayName(member.userId).charAt(0).toUpperCase()}
-                                    </span>
-                                </div>
+                                <Avatar userId={member.userId} size="sm" status={member.status} showStatus />
                                 <div className="flex-1 min-w-0">
                                     <div className="text-sm font-medium text-white truncate">
                                         {getDisplayName(member.userId)}
@@ -211,7 +208,6 @@ const MemberList: React.FC = () => {
                                         </div>
                                     )}
                                 </div>
-                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusColor(member.status)}`}></div>
                             </div>
                         ))
                     )}

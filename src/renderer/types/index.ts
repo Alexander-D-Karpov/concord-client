@@ -5,9 +5,19 @@ export interface User {
     handle: string;
     displayName: string;
     avatarUrl?: string;
+    avatarThumbnailUrl?: string;
     createdAt?: string;
     status?: UserStatus;
     bio?: string;
+}
+
+export interface AvatarEntry {
+    id: string;
+    userId: string;
+    fullUrl: string;
+    thumbnailUrl: string;
+    originalFilename: string;
+    createdAt: string;
 }
 
 export interface Room {
@@ -28,6 +38,7 @@ export interface Member {
     joinedAt: string;
     nickname?: string;
     status?: UserStatus;
+    lastReadMessageId?: string;
 }
 
 export interface MessageAttachment {

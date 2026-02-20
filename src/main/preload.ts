@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld('concord', {
     updateProfile: (displayName?: string, avatarUrl?: string, bio?: string) =>
         invoke('users:updateProfile', { displayName, avatarUrl, bio }),
     updateStatus: (status: string) => invoke('users:updateStatus', { status }),
+    uploadAvatar: (imageData: ArrayBuffer, filename: string) =>
+        invoke('users:uploadAvatar', { imageData: Array.from(new Uint8Array(imageData)), filename }),
+    deleteAvatar: (avatarId: string) => invoke('users:deleteAvatar', { avatarId }),
+    getAvatarHistory: (userId: string) => invoke('users:getAvatarHistory', { userId }),
 
     // Rooms
     getRooms: () => invoke('rooms:list'),
@@ -71,6 +75,8 @@ contextBridge.exposeInMainWorld('concord', {
         invoke('chat:search', { roomId, query, limit }),
     getThread: (messageId: string, limit?: number, cursor?: string) =>
         invoke('chat:getThread', { messageId, limit, cursor }),
+    startTyping: (roomId: string) => invoke('chat:startTyping', { roomId }),
+    stopTyping: (roomId: string) => invoke('chat:stopTyping', { roomId }),
 
     // Stream
     startEventStream: () => invoke('stream:start'),
@@ -228,4 +234,6 @@ contextBridge.exposeInMainWorld('concord', {
     markAsRead: (roomId: string, messageId: string) => invoke('chat:markAsRead', { roomId, messageId }),
     markDMAsRead: (channelId: string, messageId: string) => invoke('dm:markAsRead', { channelId, messageId }),
     getUnreadCounts: () => invoke('chat:getUnreadCounts'),
+    startDMTyping: (channelId: string) => invoke('dm:startTyping', { channelId }),
+    stopDMTyping: (channelId: string) => invoke('dm:stopTyping', { channelId }),
 });

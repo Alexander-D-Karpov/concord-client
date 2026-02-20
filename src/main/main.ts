@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
 import ConcordClient from './grpc-client';
 import { VoiceClient, VoiceConfig } from './voice-client';
-import {serialize} from "node:v8";
 
 let mainWindow: BrowserWindow | null = null;
 let client: ConcordClient | null = null;
@@ -52,8 +51,9 @@ const ipcLog = (channel: string, direction: 'IN' | 'OUT', data?: any, error?: an
         console.log(`${errorColor}[IPC ${timestamp}] ${arrow} ${channel} ERROR:${reset}`, error?.message || error);
     } else if (LOG_VERBOSE && data !== undefined) {
         const sanitized = JSON.parse(JSON.stringify(data, (key, value) => {
-            if (key === 'data' && Array.isArray(value) && value.length > 10) {
-                return `[${value.length} bytes]`;
+            if ((key === 'data' || key === 'imageData' || key === 'image_data') && value != null && typeof value === 'object') {
+                const len = Array.isArray(value) ? value.length : Object.keys(value).length;
+                if (len > 10) return `[${len} bytes]`;
             }
             return value;
         }));
@@ -147,18 +147,20 @@ function startEventStream() {
             );
 
         streamLog(`EVENT: ${eventType || 'unknown'}`, event);
-        try {
-            const bytes = serialize(event).length;
-            console.log("[STREAM] event serialized bytes:", bytes);
-        } catch (e) {
-            console.log("[STREAM] serialize failed:", e);
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            try {
+                mainWindow.webContents.send("stream:event", event);
+            } catch (e) {
+                console.error("[STREAM] Failed to forward event:", e);
+            }
         }
-        mainWindow?.webContents.send("stream:event", event);
     });
 
     stream.on('error', async (error: any) => {
         streamLog('ERROR', error?.message || error);
-        mainWindow?.webContents.send('stream:error', error.message || String(error));
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.webContents.send('stream:error', error.message || String(error)); } catch {}
+        }
         currentStream = null;
         streamInitialized = false;
 
@@ -172,7 +174,9 @@ function startEventStream() {
 
     stream.on('end', () => {
         streamLog('ENDED');
-        mainWindow?.webContents.send('stream:end');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.webContents.send('stream:end'); } catch {}
+        }
         currentStream = null;
         streamInitialized = false;
         setTimeout(startEventStream, 3000);
@@ -183,7 +187,7 @@ function startEventStream() {
 
     if (keepaliveInterval) clearInterval(keepaliveInterval);
     keepaliveInterval = setInterval(() => {
-        currentStream?.write({ payload: { ack: { event_id: '' } } });
+        currentStream?.write({ ack: { event_id: '' } });
     }, 30000);
 }
 
@@ -365,6 +369,12 @@ function setupIPC() {
     handleIpc('users:updateProfile', async (_e, { displayName, avatarUrl, bio }) =>
         assertClient().updateProfile(displayName, avatarUrl, bio));
     handleIpc('users:updateStatus', async (_e, { status }) => assertClient().updateStatus(status));
+    handleIpc('users:uploadAvatar', async (_e, { imageData, filename }) => {
+        const data = Array.isArray(imageData) ? new Uint8Array(imageData) : new Uint8Array(Object.values(imageData));
+        return assertClient().uploadAvatar(data, filename);
+    });
+    handleIpc('users:deleteAvatar', async (_e, { avatarId }) => assertClient().deleteAvatar(avatarId));
+    handleIpc('users:getAvatarHistory', async (_e, { userId }) => assertClient().getAvatarHistory(userId));
 
     // Rooms
     handleIpc('rooms:list', async () => assertClient().getRooms());
@@ -418,6 +428,8 @@ function setupIPC() {
         assertClient().searchMessages(roomId, query, limit));
     handleIpc('chat:getThread', async (_e, { messageId, limit, cursor }) =>
         assertClient().getThread(messageId, limit, cursor));
+    handleIpc('chat:startTyping', async (_e, { roomId }) => assertClient().startTyping(roomId));
+    handleIpc('chat:stopTyping', async (_e, { roomId }) => assertClient().stopTyping(roomId));
 
     // Stream
     handleIpc('stream:start', async () => ({ success: true }));
@@ -445,6 +457,9 @@ function setupIPC() {
         assertClient().getUnreadCounts());
     handleIpc('dm:markAsRead', async (_e, { channelId, messageId }) =>
         assertClient().markDMAsRead(channelId, messageId));
+
+    handleIpc('dm:startTyping', async (_e, { channelId }) => assertClient().startDMTyping(channelId));
+    handleIpc('dm:stopTyping', async (_e, { channelId }) => assertClient().stopDMTyping(channelId));
 
     // Voice
     handleIpc("voice:join", async (_e, { roomId, audioOnly, isDM }) => {

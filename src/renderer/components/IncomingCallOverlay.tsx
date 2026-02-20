@@ -5,6 +5,7 @@ import { useDMStore } from '../hooks/useDMStore';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useNotificationStore } from '../hooks/useNotificationStore';
 import { useUsersStore } from '../hooks/useUsersStore';
+import Avatar from "@/components/Avatar";
 
 const IncomingCallOverlay: React.FC = () => {
     const { incomingCall, joinCall, declineCall } = useDMCallStore();
@@ -61,13 +62,13 @@ const IncomingCallOverlay: React.FC = () => {
 
                 <div className="flex flex-col items-center">
                     <div className="relative mb-4">
-                        <div className="w-24 h-24 bg-dark-700 rounded-full flex items-center justify-center animate-pulse ring-4 ring-dark-600 overflow-hidden">
-                            {avatarUrl ? (
-                                <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
-                            ) : (
-                                <span className="text-4xl text-white font-bold">{initial}</span>
-                            )}
-                        </div>
+                        <Avatar
+                            userId={callerId}
+                            name={displayName}
+                            src={avatarUrl}
+                            size="xl"
+                            showStatus={false}
+                        />
                         <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-green-500 rounded-full border-4 border-dark-800 flex items-center justify-center">
                             <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
