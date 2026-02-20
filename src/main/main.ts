@@ -19,6 +19,33 @@ const LOG_IPC = true;
 const LOG_STREAM_EVENTS = true;
 const LOG_VERBOSE = true;
 
+function parseServerAddress(input: string): { grpcAddress: string; tls: boolean; fileBaseUrl: string } {
+    let addr = input.trim();
+    let tls = false;
+
+    if (addr.startsWith('https://')) {
+        tls = true;
+        addr = addr.replace('https://', '');
+    } else if (addr.startsWith('http://')) {
+        addr = addr.replace('http://', '');
+    }
+
+    addr = addr.replace(/\/+$/, '');
+
+    const [hostPart, portStr] = addr.split(':');
+    const port = portStr ? parseInt(portStr, 10) : (tls ? 443 : 9090);
+    const grpcAddress = `${hostPart}:${port}`;
+
+    let fileBaseUrl: string;
+    if (tls) {
+        fileBaseUrl = `https://${hostPart}${port !== 443 ? ':' + port : ''}`;
+    } else {
+        fileBaseUrl = `http://${hostPart}:8080`;
+    }
+
+    return { grpcAddress, tls, fileBaseUrl };
+}
+
 function configureHardwareAcceleration() {
     if (process.platform === 'linux') {
         app.commandLine.appendSwitch('use-gl', 'angle');
@@ -293,8 +320,9 @@ function setupIPC() {
     });
 
     handleIpc('client:initialize', async (_e, { accessToken, serverAddress, refreshToken, expiresIn }) => {
-        const address = serverAddress || process.env.CONCORD_SERVER || 'localhost:9090';
-        if (!client) client = new ConcordClient(address);
+        const raw = serverAddress || process.env.CONCORD_SERVER || 'https://concord.akarpov.ru';
+        const { grpcAddress, tls } = parseServerAddress(raw);
+        if (!client) client = new ConcordClient(grpcAddress, tls);
         if (accessToken) {
             client.setTokens(accessToken, refreshToken, expiresIn);
             if (!streamInitialized) {
@@ -307,16 +335,18 @@ function setupIPC() {
 
     // Auth
     handleIpc('auth:register', async (_e, { handle, password, displayName, serverAddress }) => {
-        const address = serverAddress || process.env.CONCORD_SERVER || 'localhost:9090';
-        if (!client) client = new ConcordClient(address);
+        const raw = serverAddress || process.env.CONCORD_SERVER || 'https://concord.akarpov.ru';
+        const { grpcAddress, tls } = parseServerAddress(raw);
+        if (!client) client = new ConcordClient(grpcAddress, tls);
         const tokens = await client.register(handle, password, displayName) as any;
         client.setTokens(tokens.access_token, tokens.refresh_token, tokens.expires_in);
         return tokens;
     });
 
     handleIpc('auth:login', async (_e, { handle, password, serverAddress }) => {
-        const address = serverAddress || process.env.CONCORD_SERVER || 'localhost:9090';
-        if (!client) client = new ConcordClient(address);
+        const raw = serverAddress || process.env.CONCORD_SERVER || 'https://concord.akarpov.ru';
+        const { grpcAddress, tls } = parseServerAddress(raw);
+        if (!client) client = new ConcordClient(grpcAddress, tls);
         const tokens = await client.login(handle, password) as any;
         client.setTokens(tokens.access_token, tokens.refresh_token, tokens.expires_in);
         if (!streamInitialized) setTimeout(startEventStream, 500);

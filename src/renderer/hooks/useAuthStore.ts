@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {useSettingsStore} from "@/hooks/useSettingsStore";
 
 interface User {
     id: string;
@@ -67,7 +68,8 @@ export const useAuthStore = create<AuthState>()(
                         });
 
                         console.log('[AuthStore] Initializing client with tokens');
-                        await window.concord.initializeClient(accessToken, undefined, refreshToken, expiresIn);
+                        const { settings } = useSettingsStore.getState();
+                        await window.concord.initializeClient(accessToken, settings.serverAddress, refreshToken, expiresIn);
                         console.log('[AuthStore] Client initialized successfully');
 
                         get().startTokenRefresh();
@@ -187,9 +189,10 @@ export const useAuthStore = create<AuthState>()(
                     });
 
                     console.log('[AuthStore] Reinitializing client with new tokens');
+                    const { settings } = useSettingsStore.getState();
                     await window.concord.initializeClient(
                         response.access_token,
-                        undefined,
+                        settings.serverAddress,
                         response.refresh_token,
                         response.expires_in
                     );
@@ -216,18 +219,18 @@ export const useAuthStore = create<AuthState>()(
                 if (state?.tokens?.accessToken && !state.isInitializing) {
                     console.log('[AuthStore] Rehydrating auth state');
                     try {
+                        const { settings } = useSettingsStore.getState();
                         const expiresIn = state.tokens.expiresAt
                             ? Math.max(Math.floor((state.tokens.expiresAt - Date.now()) / 1000), 0)
                             : undefined;
 
                         await window.concord.initializeClient(
                             state.tokens.accessToken,
-                            undefined,
+                            settings.serverAddress,
                             state.tokens.refreshToken,
                             expiresIn
                         );
                         console.log('[AuthStore] Client initialized on rehydration');
-
                         state.startTokenRefresh?.();
                     } catch (err) {
                         console.error('[AuthStore] Failed to initialize client on rehydration:', err);

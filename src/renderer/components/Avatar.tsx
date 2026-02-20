@@ -1,6 +1,6 @@
 import React, {useState, useMemo, useEffect} from 'react';
 import { useUsersStore } from '../hooks/useUsersStore';
-import { useSettingsStore } from '../hooks/useSettingsStore';
+import {getFileBaseUrl, useSettingsStore} from '../hooks/useSettingsStore';
 
 interface AvatarProps {
     userId?: string;
@@ -83,9 +83,9 @@ const Avatar: React.FC<AvatarProps> = ({
     const resolveUrl = (url?: string): string | undefined => {
         if (!url) return undefined;
         if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
-        const serverHost = settings.serverAddress.split(':')[0] || 'localhost';
+        const base = getFileBaseUrl(settings.serverAddress);
         const clean = url.startsWith('/') ? url : `/${url}`;
-        return `http://${serverHost}:8080${clean}`;
+        return `${base}${clean}`;
     };
 
     const imgSrc = useMemo(() => {

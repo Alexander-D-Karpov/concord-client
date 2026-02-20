@@ -123,10 +123,10 @@ const Settings: React.FC = () => {
                                     value={settings.serverAddress}
                                     onChange={(e) => updateSettings({ serverAddress: e.target.value })}
                                     className="w-full px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                                    placeholder="localhost:9090"
+                                    placeholder="https://concord.akarpov.ru"
                                 />
                                 <p className="text-xs text-dark-500 mt-1">
-                                    The address of your Concord server (requires restart)
+                                    Use https:// prefix for TLS connections. Changes apply on next login.
                                 </p>
                             </div>
                         </div>

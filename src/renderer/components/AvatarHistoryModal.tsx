@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Modal from './Modal';
 import Avatar from './Avatar';
 import { AvatarEntry } from '../types';
-import { useSettingsStore } from '../hooks/useSettingsStore';
+import {getFileBaseUrl, useSettingsStore} from '../hooks/useSettingsStore';
 import { useAuthStore } from '../hooks/useAuthStore';
 
 interface AvatarHistoryModalProps {
@@ -22,9 +22,9 @@ const AvatarHistoryModal: React.FC<AvatarHistoryModalProps> = ({ userId, display
 
     const resolveUrl = (url: string): string => {
         if (url.startsWith('http')) return url;
-        const host = settings.serverAddress.split(':')[0] || 'localhost';
+        const base = getFileBaseUrl(settings.serverAddress);
         const clean = url.startsWith('/') ? url : `/${url}`;
-        return `http://${host}:8080${clean}`;
+        return `${base}${clean}`;
     };
 
     useEffect(() => {

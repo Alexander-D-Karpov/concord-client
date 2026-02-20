@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MessageAttachment as AttachmentType } from '../types';
-import { useSettingsStore } from '../hooks/useSettingsStore';
+import {getFileBaseUrl, useSettingsStore} from '../hooks/useSettingsStore';
 
 interface MessageAttachmentProps {
     attachment: AttachmentType;
@@ -24,18 +24,12 @@ const MessageAttachment: React.FC<MessageAttachmentProps> = ({ attachment }) => 
 
     const getAttachmentUrl = () => {
         if (!attachment.url) return '';
+        if (attachment.url.startsWith('data:')) return attachment.url;
+        if (attachment.url.startsWith('http://') || attachment.url.startsWith('https://')) return attachment.url;
 
-        if (attachment.url.startsWith('data:')) {
-            return attachment.url;
-        }
-
-        if (attachment.url.startsWith('http://') || attachment.url.startsWith('https://')) {
-            return attachment.url;
-        }
-
-        const serverHost = settings.serverAddress.split(':')[0] || 'localhost';
+        const base = getFileBaseUrl(settings.serverAddress);
         const cleanUrl = attachment.url.startsWith('/') ? attachment.url : `/${attachment.url}`;
-        return `http://${serverHost}:8080${cleanUrl}`;
+        return `${base}${cleanUrl}`;
     };
 
     const attachmentUrl = getAttachmentUrl();

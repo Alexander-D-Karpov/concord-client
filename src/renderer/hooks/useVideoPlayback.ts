@@ -188,11 +188,6 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
 
         if (frame.isKeyframe) {
             state.pendingKeyframe = false;
-            console.log(`[VideoPlayback] Received keyframe for SSRC ${ssrc}, resetting decoder`);
-            if (state.decoder.state === 'configured') {
-                state.decoder.reset();
-                await configureDecoder(state, ssrc);
-            }
         }
 
         const EncodedVideoChunkCtor = (globalThis as any).EncodedVideoChunk;

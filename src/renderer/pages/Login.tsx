@@ -10,7 +10,6 @@ const Login: React.FC = () => {
     const [displayName, setDisplayName] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const [showServerSettings, setShowServerSettings] = useState(false);
 
     const navigate = useNavigate();
     const { setTokens, setUser } = useAuthStore();
@@ -82,6 +81,19 @@ const Login: React.FC = () => {
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-dark-300 mb-2">
+                            Server
+                        </label>
+                        <input
+                            type="text"
+                            value={settings.serverAddress}
+                            onChange={(e) => updateSettings({ serverAddress: e.target.value })}
+                            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition text-sm"
+                            placeholder="https://concord.akarpov.ru"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-dark-300 mb-2">
                             Handle
                         </label>
                         <input
@@ -138,7 +150,7 @@ const Login: React.FC = () => {
                     </button>
                 </form>
 
-                <div className="mt-6 space-y-3">
+                <div className="mt-6">
                     <button
                         onClick={() => {
                             setIsRegister(!isRegister);
@@ -150,32 +162,7 @@ const Login: React.FC = () => {
                             ? 'Already have an account? Sign in'
                             : "Don't have an account? Sign up"}
                     </button>
-
-                    <button
-                        onClick={() => setShowServerSettings(!showServerSettings)}
-                        className="block w-full text-center text-dark-400 hover:text-dark-300 text-xs transition"
-                    >
-                        {showServerSettings ? 'Hide' : 'Show'} Server Settings
-                    </button>
                 </div>
-
-                {showServerSettings && (
-                    <div className="mt-4 p-4 bg-dark-700 rounded-lg border border-dark-600">
-                        <label className="block text-sm font-medium text-dark-300 mb-2">
-                            Server Address
-                        </label>
-                        <input
-                            type="text"
-                            value={settings.serverAddress}
-                            onChange={(e) => updateSettings({ serverAddress: e.target.value })}
-                            className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
-                            placeholder="localhost:9090"
-                        />
-                        <p className="text-xs text-dark-500 mt-2">
-                            The address of your Concord server
-                        </p>
-                    </div>
-                )}
             </div>
         </div>
     );

@@ -152,12 +152,9 @@ export class VoiceService extends EventEmitter {
 
         this.cleanupTimers();
 
-        if (this.socket && this.connected && this.audioSsrc) {
-            const packet = buildByePacket(this.audioSsrc);
-            this.send(Buffer.from(packet));
-        }
-
-        this.closeSocket();
+        const socket = this.socket;
+        const wasConnected = this.connected;
+        const ssrc = this.audioSsrc;
 
         this.connected = false;
         this.connectingPromise = null;
@@ -169,17 +166,28 @@ export class VoiceService extends EventEmitter {
 
         this.participants.clear();
         this.ssrcToUserId.clear();
-
         this.replayFilters.clear();
         this.reassemblers.clear();
-
         this.retransmitCache.clear();
         this.nackTracker.clear();
         this.pliTracker.clear();
         this.stats.reset();
-
         this.seenFirstVideoFrom.clear();
 
+        if (socket && wasConnected && ssrc) {
+            const packet = buildByePacket(ssrc);
+            const buf = Buffer.from(packet);
+            socket.send(buf, 0, buf.length, this.config.endpoint.port, this.config.endpoint.host, () => {
+                try { socket.close(); } catch {}
+            });
+            setTimeout(() => {
+                try { socket.close(); } catch {}
+            }, 200);
+        } else {
+            this.closeSocket();
+        }
+
+        this.socket = undefined;
         this.emit("disconnected");
     }
 

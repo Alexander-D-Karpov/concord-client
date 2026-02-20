@@ -447,6 +447,10 @@ export function useVoiceClient(roomId: string) {
             await window.concord.leaveVoice(roomId);
         } catch {}
 
+        try {
+            await window.concord.endDMCall(roomId);
+        } catch {}
+
         if (mountedRef.current) {
             setState(initialState);
         }

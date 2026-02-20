@@ -21,8 +21,12 @@ class ConcordClient {
     private isRefreshing = false;
     private dmClient: any;
 
-    constructor(serverAddress: string) {
+
+    private useTLS: boolean;
+
+    constructor(serverAddress: string, useTLS = false) {
         this.serverAddress = serverAddress;
+        this.useTLS = useTLS;
         this.initializeClients();
     }
 
@@ -51,7 +55,9 @@ class ConcordClient {
         );
 
         const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any;
-        const credentials = grpc.credentials.createInsecure();
+        const credentials = this.useTLS
+            ? grpc.credentials.createSsl()
+            : grpc.credentials.createInsecure();
 
         this.authClient = new protoDescriptor.concord.auth.v1.AuthService(this.serverAddress, credentials);
         this.usersClient = new protoDescriptor.concord.users.v1.UsersService(this.serverAddress, credentials);

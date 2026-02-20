@@ -28,7 +28,7 @@ interface SettingsState {
 }
 
 const defaultSettings: Settings = {
-    serverAddress: 'localhost:9090',
+    serverAddress: 'https://concord.akarpov.ru',
     theme: 'dark',
     notifications: true,
     sounds: true,
@@ -64,3 +64,20 @@ export const useSettingsStore = create<SettingsState>()(
         }
     )
 );
+
+export function getFileBaseUrl(serverAddress: string): string {
+    let addr = serverAddress.trim();
+
+    if (addr.startsWith('https://')) {
+        const host = addr.replace('https://', '').replace(/\/+$/, '').split(':')[0];
+        return `https://${host}`;
+    }
+
+    if (addr.startsWith('http://')) {
+        const host = addr.replace('http://', '').replace(/\/+$/, '').split(':')[0];
+        return `http://${host}:8080`;
+    }
+
+    const host = addr.split(':')[0] || 'localhost';
+    return `http://${host}:8080`;
+}

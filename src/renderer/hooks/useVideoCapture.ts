@@ -265,10 +265,6 @@ export function useVideoCapture(enabled: boolean, isScreenShare: boolean, option
                                     !sentKeyframe ||
                                     (now - lastKeyframeTime) > KEYFRAME_INTERVAL_MS;
 
-                                if (needKeyframe && inputFrameCount > 0) {
-                                    await encoder.flush();
-                                }
-
                                 encoder.encode(frame, { keyFrame: needKeyframe });
 
                                 if (needKeyframe) forceNextKeyframe = false;
