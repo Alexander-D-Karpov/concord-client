@@ -169,7 +169,7 @@ const MemberList: React.FC = () => {
     };
 
     return (
-        <div className="w-60 bg-dark-800 border-l border-dark-700 flex flex-col h-screen overflow-hidden">
+        <div className="w-60 bg-dark-800 border-l border-dark-700 flex flex-col h-full overflow-hidden">
             <div className="p-4 border-b border-dark-700 flex items-center justify-between flex-shrink-0">
                 <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider">
                     Members — {currentMembers.length}

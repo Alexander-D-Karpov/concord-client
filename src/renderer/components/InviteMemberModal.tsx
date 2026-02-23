@@ -105,7 +105,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({ roomId, onClose, 
                                     className="flex items-center justify-between p-3 bg-dark-700 hover:bg-dark-600 rounded-lg transition"
                                 >
                                     <div className="flex items-center space-x-3 flex-1 min-w-0">
-                                        <Avatar name={user.displayName || user.handle} src={user.avatarUrl} size="md" showStatus={false} />
+                                        <Avatar userId={user.id} name={user.displayName || user.handle} src={user.avatarUrl} size="md" showStatus={false} />
                                         <div className="flex-1 min-w-0">
                                             <div className="text-white font-medium truncate">
                                                 {user.displayName || user.handle}

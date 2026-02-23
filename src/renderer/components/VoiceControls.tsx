@@ -6,6 +6,7 @@ import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useDMStore } from '../hooks/useDMStore';
 import DeviceSelector from './DeviceSelector';
 import VideoGrid from './VideoGrid';
+import {useVoiceStore} from "@/hooks/useVoiceStore";
 
 interface VoiceControlsProps {
     roomId: string;
@@ -42,6 +43,10 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId, isDM = false }) =
     // Auto-connect for DM calls, but respect intentional disconnects
     useEffect(() => {
         if (isDM && !state.connected && !state.connecting && !userIntentionallyDisconnected) {
+            const store = useVoiceStore.getState();
+            if (store.connected && store.roomId === roomId) {
+                return;
+            }
             console.log('[VoiceControls] Auto-connecting to DM call');
             connect(false, true);
         }
@@ -163,7 +168,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId, isDM = false }) =
                             </button>
                         </div>
                     </div>
-                    <div className="text-xs text-dark-400 mb-2">{state.participants.size} participant(s)</div>
+                    <div className="text-xs text-dark-400 mb-2">{state.participants.size} other participant(s)</div>
                     {!state.muted && (
                         <div className="h-1 bg-dark-600 rounded-full overflow-hidden">
                             <div className="h-full bg-green-500 transition-all duration-75" style={{ width: `${audioLevel}%` }} />

@@ -121,7 +121,7 @@ const Home: React.FC = () => {
     const showDM = currentChannelId && !currentRoomId;
 
     return (
-        <div className="flex h-screen overflow-hidden relative bg-dark-900">
+        <div className="flex h-full overflow-hidden relative bg-dark-900">
             <button
                 onClick={() => setShowSidebar(!showSidebar)}
                 className="lg:hidden fixed top-4 left-4 z-30 p-2 bg-dark-800 rounded-lg border border-dark-700 text-white shadow-lg"

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import {useVoiceStore} from "@/hooks/useVoiceStore";
 
 declare global {
     interface Window {
@@ -47,7 +48,26 @@ const initialState: VoiceClientState = {
 };
 
 export function useVoiceClient(roomId: string) {
-    const [state, setState] = useState<VoiceClientState>(initialState);
+    const [state, setState] = useState<VoiceClientState>(() => {
+        const store = useVoiceStore.getState();
+        if (store.connected && store.roomId === roomId) {
+            return {
+                connected: true,
+                connecting: false,
+                muted: store.muted,
+                deafened: store.deafened,
+                videoEnabled: store.videoEnabled,
+                screenSharing: store.screenSharing,
+                error: null,
+                participants: new Map(store.participants),
+                localAudioSsrc: store.localAudioSsrc,
+                localVideoSsrc: store.localVideoSsrc,
+                localScreenSsrc: store.localScreenSsrc,
+                disabledSSRCs: new Set(store.disabledSSRCs),
+            };
+        }
+        return initialState;
+    });
 
     const cleanupRef = useRef<(() => void)[]>([]);
     const roomIdRef = useRef(roomId);
@@ -341,6 +361,7 @@ export function useVoiceClient(roomId: string) {
         setupEventListeners();
 
         safeSetState(prev => ({ ...prev, connecting: true, error: null }));
+        useVoiceStore.getState().setConnecting(true);
 
         try {
             const result = await window.concord.joinVoice(roomId, audioOnly, isDM);
@@ -396,6 +417,14 @@ export function useVoiceClient(roomId: string) {
                 videoEnabled: !audioOnly && (result.videoSsrc > 0),
             }));
 
+            const voiceStore = useVoiceStore.getState();
+            voiceStore.setRoom(roomId, isDM);
+            voiceStore.setConnected(true);
+            voiceStore.setConnecting(false);
+            voiceStore.setLocalSSRCs(result.ssrc, result.videoSsrc, result.screenSsrc);
+            voiceStore.setParticipants(participants);
+
+
             setTimeout(async () => {
                 if (!mountedRef.current) return;
                 try {
@@ -425,6 +454,7 @@ export function useVoiceClient(roomId: string) {
 
         } catch (err: any) {
             console.error('[useVoiceClient] Connect error:', err);
+            useVoiceStore.getState().reset();
             if (mountedRef.current) {
                 safeSetState(prev => ({
                     ...prev,
@@ -436,12 +466,39 @@ export function useVoiceClient(roomId: string) {
         }
     }, [roomId, setupEventListeners, safeSetState, fetchUserInfo]);
 
+    useEffect(() => {
+        const store = useVoiceStore.getState();
+        if (store.connected && store.roomId === roomId) {
+            safeSetState(prev => ({
+                ...prev,
+                connected: true,
+                connecting: false,
+                muted: store.muted,
+                deafened: store.deafened,
+                videoEnabled: store.videoEnabled,
+                screenSharing: store.screenSharing,
+                participants: new Map(store.participants),
+                localAudioSsrc: store.localAudioSsrc,
+                localVideoSsrc: store.localVideoSsrc,
+                localScreenSsrc: store.localScreenSsrc,
+                disabledSSRCs: new Set(store.disabledSSRCs),
+                error: null,
+            }));
+            if (cleanupRef.current.length === 0) {
+                setupEventListeners();
+            }
+        } else if (!store.connected || store.roomId !== roomId) {
+            safeSetState(() => initialState);
+        }
+    }, [roomId, safeSetState, setupEventListeners]);
+
     const disconnect = useCallback(async () => {
         cleanupRef.current.forEach(fn => {
             try { fn(); } catch {}
         });
         cleanupRef.current = [];
         ssrcToUserIdRef.current.clear();
+        useVoiceStore.getState().reset();
 
         try {
             await window.concord.leaveVoice(roomId);
@@ -458,16 +515,19 @@ export function useVoiceClient(roomId: string) {
 
     const setMuted = useCallback((muted: boolean) => {
         safeSetState(prev => ({ ...prev, muted }));
+        useVoiceStore.getState().setMuted(muted);
         window.concord.setVoiceMediaState?.(muted, stateRef.current.videoEnabled, stateRef.current.screenSharing).catch(() => {});
         window.concord.setMediaPrefs?.(roomId, false, stateRef.current.videoEnabled, muted, stateRef.current.screenSharing).catch(() => {});
     }, [roomId, safeSetState]);
 
     const setDeafened = useCallback((deafened: boolean) => {
         safeSetState(prev => ({ ...prev, deafened, muted: deafened ? true : prev.muted }));
+        useVoiceStore.getState().setDeafened(deafened);
     }, [safeSetState]);
 
     const setVideoEnabled = useCallback((videoEnabled: boolean) => {
         safeSetState(prev => ({ ...prev, videoEnabled }));
+        useVoiceStore.getState().setVideoEnabled(videoEnabled);
         window.concord.setVoiceMediaState?.(stateRef.current.muted, videoEnabled, stateRef.current.screenSharing).catch(() => {});
         window.concord.setMediaPrefs?.(roomId, false, videoEnabled, stateRef.current.muted, stateRef.current.screenSharing).catch(() => {});
     }, [roomId, safeSetState]);
@@ -475,9 +535,8 @@ export function useVoiceClient(roomId: string) {
     const setScreenSharing = useCallback((screenSharing: boolean) => {
         const currentMuted = stateRef.current.muted;
         const currentVideo = stateRef.current.videoEnabled;
-
         safeSetState(prev => ({ ...prev, screenSharing }));
-
+        useVoiceStore.getState().setScreenSharing(screenSharing);
         window.concord.setVoiceMediaState?.(currentMuted, currentVideo, screenSharing).catch(() => {});
         window.concord.setMediaPrefs?.(roomId, false, currentVideo, currentMuted, screenSharing).catch(() => {});
     }, [roomId, safeSetState]);

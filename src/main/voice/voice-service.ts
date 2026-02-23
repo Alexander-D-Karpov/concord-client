@@ -61,9 +61,7 @@ export class VoiceService extends EventEmitter {
     private videoSequence = 0;
     private screenSequence = 0;
 
-    private audioTimestamp = 0;
-    private videoTimestamp = 0;
-    private screenTimestamp = 0;
+    private baseTimeMs = 0;
 
     private audioCounter = 0n;
     private videoCounter = 0n;
@@ -312,6 +310,8 @@ export class VoiceService extends EventEmitter {
             }
 
             this.connected = true;
+
+            this.baseTimeMs = Date.now();
 
             this.startPingInterval();
             this.startRRInterval();
@@ -625,9 +625,7 @@ export class VoiceService extends EventEmitter {
 
         const counter = this.audioCounter++;
         const sequence = this.audioSequence++ & 0xffff;
-
-        const timestamp = this.audioTimestamp >>> 0;
-        this.audioTimestamp = (this.audioTimestamp + 960) >>> 0;
+        const timestamp = (((Date.now() - this.baseTimeMs) * 48) >>> 0);
 
         const header: MediaHeader = {
             type: PacketType.AUDIO,
@@ -655,24 +653,21 @@ export class VoiceService extends EventEmitter {
 
         let targetSsrc: number | undefined;
         let sequence: number;
-        let timestamp: number;
         let counter: bigint;
 
         if (source === 'screen') {
             if (!this.screenSsrc) return;
             targetSsrc = this.screenSsrc;
             sequence = this.screenSequence;
-            timestamp = this.screenTimestamp;
             counter = this.screenCounter;
-            this.screenTimestamp = (this.screenTimestamp + 3000) >>> 0;
         } else {
             if (!this.videoSsrc) return;
             targetSsrc = this.videoSsrc;
             sequence = this.videoSequence;
-            timestamp = this.videoTimestamp;
             counter = this.videoCounter;
-            this.videoTimestamp = (this.videoTimestamp + 3000) >>> 0;
         }
+
+        const timestamp = (((Date.now() - this.baseTimeMs) * 90) >>> 0);
 
         const fragments = this.fragmenter.fragment(videoData, isKeyframe);
 

@@ -8,6 +8,7 @@ import { useAuthStore } from './hooks/useAuthStore';
 import ToastContainer from './components/ToastContainer';
 import IncomingCallOverlay from './components/IncomingCallOverlay';
 import { useDMCallListeners } from './hooks/useDMCallListeners';
+import VoiceBar from "@/components/VoiceBar";
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { isAuthenticated } = useAuthStore();
@@ -34,33 +35,38 @@ const App: React.FC = () => {
         <HashRouter>
             <ToastContainer />
             <IncomingCallOverlay />
-            <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route
-                    path="/"
-                    element={
-                        <ProtectedRoute>
-                            <Home />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="/friends"
-                    element={
-                        <ProtectedRoute>
-                            <Friends />
-                        </ProtectedRoute>
-                    }
-                />
-                <Route
-                    path="/settings"
-                    element={
-                        <ProtectedRoute>
-                            <Settings />
-                        </ProtectedRoute>
-                    }
-                />
-            </Routes>
+            <div className="flex flex-col h-screen overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    <Routes>
+                        <Route path="/login" element={<Login />} />
+                        <Route
+                            path="/"
+                            element={
+                                <ProtectedRoute>
+                                    <Home />
+                                </ProtectedRoute>
+                            }
+                        />
+                        <Route
+                            path="/friends"
+                            element={
+                                <ProtectedRoute>
+                                    <Friends />
+                                </ProtectedRoute>
+                            }
+                        />
+                        <Route
+                            path="/settings"
+                            element={
+                                <ProtectedRoute>
+                                    <Settings />
+                                </ProtectedRoute>
+                            }
+                        />
+                    </Routes>
+                </div>
+                <VoiceBar />
+            </div>
         </HashRouter>
     );
 };
