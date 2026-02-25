@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import {useVoiceStore} from "@/hooks/useVoiceStore";
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { useVoiceStore } from './useVoiceStore';
 
 declare global {
     interface Window {
@@ -18,6 +18,7 @@ export interface ParticipantState {
     speaking: boolean;
     displayName?: string;
     avatarUrl?: string;
+    qualityTier?: number;
 }
 
 export interface VoiceClientState {
@@ -33,6 +34,7 @@ export interface VoiceClientState {
     localVideoSsrc?: number;
     localScreenSsrc?: number;
     disabledSSRCs: Set<number>;
+    qualityPrefs: Map<number, number>;
 }
 
 const initialState: VoiceClientState = {
@@ -45,6 +47,7 @@ const initialState: VoiceClientState = {
     error: null,
     participants: new Map(),
     disabledSSRCs: new Set(),
+    qualityPrefs: new Map(),
 };
 
 export function useVoiceClient(roomId: string) {
@@ -64,6 +67,7 @@ export function useVoiceClient(roomId: string) {
                 localVideoSsrc: store.localVideoSsrc,
                 localScreenSsrc: store.localScreenSsrc,
                 disabledSSRCs: new Set(store.disabledSSRCs),
+                qualityPrefs: new Map(),
             };
         }
         return initialState;
@@ -75,31 +79,20 @@ export function useVoiceClient(roomId: string) {
     const stateRef = useRef(state);
     const ssrcToUserIdRef = useRef<Map<number, string>>(new Map());
     const userInfoCacheRef = useRef<Map<string, { displayName: string; avatarUrl?: string }>>(new Map());
+    const subscriptionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    useEffect(() => {
-        stateRef.current = state;
-    }, [state]);
-
-    useEffect(() => {
-        roomIdRef.current = roomId;
-    }, [roomId]);
-
-    useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
-    }, []);
+    useEffect(() => { stateRef.current = state; }, [state]);
+    useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
+    useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
     const safeSetState = useCallback((updater: (prev: VoiceClientState) => VoiceClientState) => {
-        if (mountedRef.current) {
-            setState(updater);
-        }
+        if (mountedRef.current) setState(updater);
     }, []);
 
     const fetchUserInfo = useCallback(async (userId: string): Promise<{ displayName: string; avatarUrl?: string }> => {
         const cached = userInfoCacheRef.current.get(userId);
         if (cached) return cached;
         if (!userId) return { displayName: 'Unknown' };
-
         try {
             const user = await window.concord.getUser(userId);
             const info = {
@@ -108,81 +101,87 @@ export function useVoiceClient(roomId: string) {
             };
             userInfoCacheRef.current.set(userId, info);
             return info;
-        } catch (err) {
-            console.warn('[useVoiceClient] Failed to fetch user info for:', userId, err);
+        } catch {
             const fallback = { displayName: userId.split('-')[0] };
             userInfoCacheRef.current.set(userId, fallback);
             return fallback;
         }
     }, []);
 
-    // --- Subscription Management ---
-
     const toggleSubscription = useCallback((ssrc: number) => {
         safeSetState(prev => {
             const nextDisabled = new Set(prev.disabledSSRCs);
-            if (nextDisabled.has(ssrc)) {
-                nextDisabled.delete(ssrc);
-            } else {
-                nextDisabled.add(ssrc);
-            }
+            if (nextDisabled.has(ssrc)) nextDisabled.delete(ssrc);
+            else nextDisabled.add(ssrc);
             return { ...prev, disabledSSRCs: nextDisabled };
         });
     }, [safeSetState]);
 
-    // Calculate active subscriptions based on participants and disabledSSRCs
-    // This logic was moved from VideoGrid to here
-    useEffect(() => {
-        if (!state.connected) return;
+    const setQualityForSSRC = useCallback((ssrc: number, tier: number) => {
+        safeSetState(prev => {
+            const qp = new Map(prev.qualityPrefs);
+            qp.set(ssrc, tier);
+            return { ...prev, qualityPrefs: qp };
+        });
+    }, [safeSetState]);
+
+    const pushSubscriptions = useCallback(() => {
+        const s = stateRef.current;
+        if (!s.connected) return;
 
         const activeSSRCs: number[] = [];
-        state.participants.forEach(p => {
-            // Always subscribe to audio
+        s.participants.forEach(p => {
             if (p.audioSsrc) activeSSRCs.push(p.audioSsrc);
-
-            // Subscribe to video if not disabled
-            if (p.videoSsrc && !state.disabledSSRCs.has(p.videoSsrc)) {
-                activeSSRCs.push(p.videoSsrc);
-            }
-
-            // Subscribe to screen if not disabled
-            if (p.screenSsrc && !state.disabledSSRCs.has(p.screenSsrc)) {
-                activeSSRCs.push(p.screenSsrc);
-            }
+            if (p.videoSsrc && !s.disabledSSRCs.has(p.videoSsrc)) activeSSRCs.push(p.videoSsrc);
+            if (p.screenSsrc && !s.disabledSSRCs.has(p.screenSsrc)) activeSSRCs.push(p.screenSsrc);
         });
 
-        if (window.concord.updateVoiceSubscriptions) {
-            window.concord.updateVoiceSubscriptions(activeSSRCs).catch((err: any) => {
-                console.error('[useVoiceClient] Failed to update subscriptions:', err);
-            });
-        }
-    }, [state.participants, state.disabledSSRCs, state.connected]);
+        window.concord.updateVoiceSubscriptions?.(activeSSRCs).catch(() => {});
+    }, []);
 
-    // -------------------------------
+    useEffect(() => {
+        if (!state.connected) return;
+        pushSubscriptions();
+    }, [state.participants, state.disabledSSRCs, state.connected, pushSubscriptions]);
+
+    useEffect(() => {
+        if (!state.connected) {
+            if (subscriptionTimerRef.current) {
+                clearInterval(subscriptionTimerRef.current);
+                subscriptionTimerRef.current = null;
+            }
+            return;
+        }
+
+        subscriptionTimerRef.current = setInterval(() => {
+            pushSubscriptions();
+        }, 5000);
+
+        return () => {
+            if (subscriptionTimerRef.current) {
+                clearInterval(subscriptionTimerRef.current);
+                subscriptionTimerRef.current = null;
+            }
+        };
+    }, [state.connected, pushSubscriptions]);
 
     const setupEventListeners = useCallback(() => {
         const unsubSpeaking = window.concord.onVoiceSpeaking?.((data: any) => {
             if (!mountedRef.current) return;
-
             const ssrc = data.ssrc;
             const videoSsrc = data.video_ssrc || data.videoSsrc;
-            const odUserId = data.user_id || data.userId || ssrcToUserIdRef.current.get(ssrc);
-
-            if (!odUserId) return;
-
-            if (ssrc) ssrcToUserIdRef.current.set(ssrc, odUserId);
-            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, odUserId);
+            const uid = data.user_id || data.userId || ssrcToUserIdRef.current.get(ssrc);
+            if (!uid) return;
+            if (ssrc) ssrcToUserIdRef.current.set(ssrc, uid);
+            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, uid);
 
             safeSetState(prev => {
                 const participants = new Map(prev.participants);
-                const existing = participants.get(odUserId);
-
+                const existing = participants.get(uid);
                 if (existing) {
-                    participants.set(odUserId, {
+                    participants.set(uid, {
                         ...existing,
                         speaking: data.speaking ?? existing.speaking,
-                        muted: data.muted ?? existing.muted,
-                        videoEnabled: data.video_enabled ?? data.videoEnabled ?? existing.videoEnabled,
                         audioSsrc: ssrc || existing.audioSsrc,
                         videoSsrc: videoSsrc || existing.videoSsrc,
                     });
@@ -193,27 +192,20 @@ export function useVoiceClient(roomId: string) {
 
         const unsubParticipantJoined = window.concord.onVoiceParticipantJoined?.(async (data: any) => {
             if (!mountedRef.current) return;
-
-            const odUserId = data.userId || data.user_id;
-            if (!odUserId) return;
-
+            const uid = data.userId || data.user_id;
+            if (!uid) return;
             const audioSsrc = data.ssrc || data.audioSsrc || data.audio_ssrc || 0;
             const videoSsrc = data.videoSsrc || data.video_ssrc || 0;
             const screenSsrc = data.screenSsrc || data.screen_ssrc || 0;
+            if (audioSsrc) ssrcToUserIdRef.current.set(audioSsrc, uid);
+            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, uid);
+            if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, uid);
 
-            if (audioSsrc) ssrcToUserIdRef.current.set(audioSsrc, odUserId);
-            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, odUserId);
-            if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, odUserId);
-
-            const userInfo = await fetchUserInfo(odUserId);
-
+            const userInfo = await fetchUserInfo(uid);
             safeSetState(prev => {
                 const participants = new Map(prev.participants);
-                participants.set(odUserId, {
-                    userId: odUserId,
-                    audioSsrc,
-                    videoSsrc,
-                    screenSsrc,
+                participants.set(uid, {
+                    userId: uid, audioSsrc, videoSsrc, screenSsrc,
                     muted: data.muted ?? false,
                     videoEnabled: data.video_enabled ?? data.videoEnabled ?? (videoSsrc > 0),
                     screenSharing: data.screenSharing ?? data.screen_sharing ?? (screenSsrc > 0),
@@ -223,28 +215,26 @@ export function useVoiceClient(roomId: string) {
                 });
                 return { ...prev, participants };
             });
+
+            setTimeout(pushSubscriptions, 200);
         });
 
         const unsubMediaState = window.concord.onVoiceMediaState?.((data: any) => {
             if (!mountedRef.current) return;
-
-            const odUserId = data.user_id || data.userId;
-            if (!odUserId) return;
-
+            const uid = data.user_id || data.userId;
+            if (!uid) return;
             const ssrc = (data.ssrc ?? 0) >>> 0;
             const videoSsrc = (data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0;
             const screenSsrc = (data.screenSsrc ?? data.screen_ssrc ?? 0) >>> 0;
-
-            if (ssrc) ssrcToUserIdRef.current.set(ssrc, odUserId);
-            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, odUserId);
-            if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, odUserId);
+            if (ssrc) ssrcToUserIdRef.current.set(ssrc, uid);
+            if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, uid);
+            if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, uid);
 
             safeSetState(prev => {
                 const participants = new Map(prev.participants);
-                const existing = participants.get(odUserId);
-
+                const existing = participants.get(uid);
                 const updated: ParticipantState = {
-                    userId: odUserId,
+                    userId: uid,
                     audioSsrc: ssrc || existing?.audioSsrc || 0,
                     videoSsrc: videoSsrc || existing?.videoSsrc || 0,
                     screenSsrc: screenSsrc || existing?.screenSsrc || 0,
@@ -255,29 +245,25 @@ export function useVoiceClient(roomId: string) {
                     displayName: existing?.displayName,
                     avatarUrl: existing?.avatarUrl,
                 };
-
-                participants.set(odUserId, updated);
-
+                participants.set(uid, updated);
                 if (!existing) {
-                    fetchUserInfo(odUserId).then(info => {
+                    fetchUserInfo(uid).then(info => {
                         safeSetState(prev2 => {
                             const p2 = new Map(prev2.participants);
-                            const current = p2.get(odUserId);
-                            if (current) {
-                                p2.set(odUserId, { ...current, displayName: info.displayName, avatarUrl: info.avatarUrl });
-                            }
+                            const cur = p2.get(uid);
+                            if (cur) p2.set(uid, { ...cur, displayName: info.displayName, avatarUrl: info.avatarUrl });
                             return { ...prev2, participants: p2 };
                         });
                     });
                 }
-
                 return { ...prev, participants };
             });
+
+            setTimeout(pushSubscriptions, 200);
         });
 
         const unsubError = window.concord.onVoiceError?.((error: string) => {
             if (!mountedRef.current) return;
-            console.error('[useVoiceClient] Voice error:', error);
             safeSetState(prev => ({ ...prev, error }));
         });
 
@@ -290,19 +276,36 @@ export function useVoiceClient(roomId: string) {
         const unsubReconnected = window.concord.onVoiceReconnected?.(() => {
             if (!mountedRef.current) return;
             safeSetState(prev => ({ ...prev, connected: true, error: null }));
+            setTimeout(pushSubscriptions, 500);
         });
+
+        const handleVoiceUserLeft = (event: CustomEvent) => {
+            if (!mountedRef.current) return;
+            const uid = event.detail?.user_id;
+            if (!uid) return;
+            safeSetState(prev => {
+                const participants = new Map(prev.participants);
+                const participant = participants.get(uid);
+                if (participant) {
+                    if (participant.audioSsrc) ssrcToUserIdRef.current.delete(participant.audioSsrc);
+                    if (participant.videoSsrc) ssrcToUserIdRef.current.delete(participant.videoSsrc);
+                    if (participant.screenSsrc) ssrcToUserIdRef.current.delete(participant.screenSsrc);
+                }
+                participants.delete(uid);
+                return { ...prev, participants };
+            });
+        };
 
         const handleVoiceStateChanged = (event: CustomEvent) => {
             if (!mountedRef.current) return;
             const data = event.detail;
-            const odUserId = data.user_id;
-            if (!odUserId) return;
-
+            const uid = data.user_id;
+            if (!uid) return;
             safeSetState(prev => {
                 const participants = new Map(prev.participants);
-                const existing = participants.get(odUserId);
+                const existing = participants.get(uid);
                 if (existing) {
-                    participants.set(odUserId, {
+                    participants.set(uid, {
                         ...existing,
                         muted: data.muted ?? existing.muted,
                         videoEnabled: data.video_enabled ?? existing.videoEnabled,
@@ -314,91 +317,65 @@ export function useVoiceClient(roomId: string) {
             });
         };
 
-        const handleVoiceUserLeft = (event: CustomEvent) => {
-            if (!mountedRef.current) return;
-            const data = event.detail;
-            const odUserId = data.user_id;
-            if (!odUserId) return;
-
-            safeSetState(prev => {
-                const participants = new Map(prev.participants);
-                const participant = participants.get(odUserId);
-                if (participant) {
-                    if (participant.audioSsrc) ssrcToUserIdRef.current.delete(participant.audioSsrc);
-                    if (participant.videoSsrc) ssrcToUserIdRef.current.delete(participant.videoSsrc);
-                    if (participant.screenSsrc) ssrcToUserIdRef.current.delete(participant.screenSsrc);
-                }
-                participants.delete(odUserId);
-                return { ...prev, participants };
-            });
-        };
-
         window.addEventListener('voice-state-changed', handleVoiceStateChanged as EventListener);
         window.addEventListener('voice-user-left', handleVoiceUserLeft as EventListener);
 
-        if (unsubSpeaking) cleanupRef.current.push(unsubSpeaking);
-        if (unsubParticipantJoined) cleanupRef.current.push(unsubParticipantJoined);
-        if (unsubMediaState) cleanupRef.current.push(unsubMediaState);
-        if (unsubError) cleanupRef.current.push(unsubError);
-        if (unsubDisconnected) cleanupRef.current.push(unsubDisconnected);
-        if (unsubReconnected) cleanupRef.current.push(unsubReconnected);
-
-        cleanupRef.current.push(() => {
+        const cleanups: (() => void)[] = [];
+        if (unsubSpeaking) cleanups.push(unsubSpeaking);
+        if (unsubParticipantJoined) cleanups.push(unsubParticipantJoined);
+        if (unsubMediaState) cleanups.push(unsubMediaState);
+        if (unsubError) cleanups.push(unsubError);
+        if (unsubDisconnected) cleanups.push(unsubDisconnected);
+        if (unsubReconnected) cleanups.push(unsubReconnected);
+        cleanups.push(() => {
             window.removeEventListener('voice-state-changed', handleVoiceStateChanged as EventListener);
             window.removeEventListener('voice-user-left', handleVoiceUserLeft as EventListener);
         });
-    }, [safeSetState, fetchUserInfo]);
+
+        cleanupRef.current = cleanups;
+    }, [safeSetState, fetchUserInfo, pushSubscriptions]);
 
     const connect = useCallback(async (audioOnly = false, isDM = false) => {
         if (!mountedRef.current) return;
 
-        cleanupRef.current.forEach(fn => {
-            try { fn(); } catch (e) {}
-        });
+        cleanupRef.current.forEach(fn => { try { fn(); } catch {} });
         cleanupRef.current = [];
         ssrcToUserIdRef.current.clear();
 
         setupEventListeners();
-
         safeSetState(prev => ({ ...prev, connecting: true, error: null }));
         useVoiceStore.getState().setConnecting(true);
 
         try {
             const result = await window.concord.joinVoice(roomId, audioOnly, isDM);
-
             if (!mountedRef.current) return;
 
             const participants = new Map<string, ParticipantState>();
 
-            if (result.participants && result.participants.length > 0) {
-                const userInfoPromises = result.participants.map(async (p: any) => {
-                    const odUserId = p.userId || p.user_id;
-                    if (!odUserId || typeof odUserId !== 'string') return null;
-                    const userInfo = await fetchUserInfo(odUserId);
-                    return { ...p, odUserId, ...userInfo };
-                });
+            if (result.participants?.length > 0) {
+                const enriched = await Promise.all(
+                    result.participants.map(async (p: any) => {
+                        const uid = p.userId || p.user_id;
+                        if (!uid) return null;
+                        const userInfo = await fetchUserInfo(uid);
+                        return { ...p, uid, ...userInfo };
+                    })
+                );
 
-                const enrichedParticipants = await Promise.all(userInfoPromises);
-
-                for (const p of enrichedParticipants) {
+                for (const p of enriched) {
                     if (!p) continue;
-                    const userId = p.odUserId;
                     const audioSsrc = p.ssrc || p.audioSsrc || p.audio_ssrc || 0;
                     const videoSsrc = p.video_ssrc || p.videoSsrc || 0;
                     const screenSsrc = p.screen_ssrc || p.screenSsrc || 0;
+                    if (audioSsrc) ssrcToUserIdRef.current.set(audioSsrc, p.uid);
+                    if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, p.uid);
+                    if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, p.uid);
 
-                    if (audioSsrc) ssrcToUserIdRef.current.set(audioSsrc, userId);
-                    if (videoSsrc) ssrcToUserIdRef.current.set(videoSsrc, userId);
-                    if (screenSsrc) ssrcToUserIdRef.current.set(screenSsrc, userId);
-
-                    participants.set(userId, {
-                        userId,
-                        audioSsrc,
-                        videoSsrc,
-                        screenSsrc,
-                        muted: !!(p.muted),
-                        videoEnabled: !!(p.video_enabled || p.videoEnabled || (videoSsrc > 0)),
-                        screenSharing: !!(p.screen_sharing || p.screenSharing || (screenSsrc > 0)),
+                    participants.set(p.uid, {
+                        userId: p.uid, audioSsrc, videoSsrc, screenSsrc,
+                        muted: !!p.muted,
+                        videoEnabled: !!(p.video_enabled || p.videoEnabled || videoSsrc > 0),
+                        screenSharing: !!(p.screen_sharing || p.screenSharing || screenSsrc > 0),
                         speaking: false,
                         displayName: p.displayName,
                         avatarUrl: p.avatarUrl,
@@ -414,7 +391,7 @@ export function useVoiceClient(roomId: string) {
                 localAudioSsrc: result.ssrc,
                 localVideoSsrc: result.videoSsrc,
                 localScreenSsrc: result.screenSsrc,
-                videoEnabled: !audioOnly && (result.videoSsrc > 0),
+                videoEnabled: !audioOnly && result.videoSsrc > 0,
             }));
 
             const voiceStore = useVoiceStore.getState();
@@ -424,20 +401,20 @@ export function useVoiceClient(roomId: string) {
             voiceStore.setLocalSSRCs(result.ssrc, result.videoSsrc, result.screenSsrc);
             voiceStore.setParticipants(participants);
 
+            setTimeout(pushSubscriptions, 300);
 
             setTimeout(async () => {
                 if (!mountedRef.current) return;
                 try {
                     const status = await window.concord.getVoiceStatus(roomId);
                     if (!status?.participants || !mountedRef.current) return;
-
                     safeSetState(prev => {
-                        const updatedParticipants = new Map(prev.participants);
+                        const up = new Map(prev.participants);
                         for (const p of status.participants) {
-                            const odUserId = p.user_id;
-                            const existing = updatedParticipants.get(odUserId);
+                            const uid = p.user_id;
+                            const existing = up.get(uid);
                             if (existing) {
-                                updatedParticipants.set(odUserId, {
+                                up.set(uid, {
                                     ...existing,
                                     muted: p.muted ?? existing.muted,
                                     videoEnabled: p.video_enabled ?? existing.videoEnabled,
@@ -445,38 +422,30 @@ export function useVoiceClient(roomId: string) {
                                 });
                             }
                         }
-                        return { ...prev, participants: updatedParticipants };
+                        return { ...prev, participants: up };
                     });
-                } catch (err) {
-                    console.error('[useVoiceClient] Failed to fetch initial voice status:', err);
-                }
+                } catch {}
             }, 500);
 
         } catch (err: any) {
-            console.error('[useVoiceClient] Connect error:', err);
             useVoiceStore.getState().reset();
             if (mountedRef.current) {
                 safeSetState(prev => ({
-                    ...prev,
-                    connecting: false,
-                    connected: false,
+                    ...prev, connecting: false, connected: false,
                     error: err?.message || 'Failed to connect',
                 }));
             }
         }
-    }, [roomId, setupEventListeners, safeSetState, fetchUserInfo]);
+    }, [roomId, setupEventListeners, safeSetState, fetchUserInfo, pushSubscriptions]);
 
     useEffect(() => {
         const store = useVoiceStore.getState();
         if (store.connected && store.roomId === roomId) {
             safeSetState(prev => ({
                 ...prev,
-                connected: true,
-                connecting: false,
-                muted: store.muted,
-                deafened: store.deafened,
-                videoEnabled: store.videoEnabled,
-                screenSharing: store.screenSharing,
+                connected: true, connecting: false,
+                muted: store.muted, deafened: store.deafened,
+                videoEnabled: store.videoEnabled, screenSharing: store.screenSharing,
                 participants: new Map(store.participants),
                 localAudioSsrc: store.localAudioSsrc,
                 localVideoSsrc: store.localVideoSsrc,
@@ -484,33 +453,20 @@ export function useVoiceClient(roomId: string) {
                 disabledSSRCs: new Set(store.disabledSSRCs),
                 error: null,
             }));
-            if (cleanupRef.current.length === 0) {
-                setupEventListeners();
-            }
+            if (cleanupRef.current.length === 0) setupEventListeners();
         } else if (!store.connected || store.roomId !== roomId) {
             safeSetState(() => initialState);
         }
     }, [roomId, safeSetState, setupEventListeners]);
 
     const disconnect = useCallback(async () => {
-        cleanupRef.current.forEach(fn => {
-            try { fn(); } catch {}
-        });
+        cleanupRef.current.forEach(fn => { try { fn(); } catch {} });
         cleanupRef.current = [];
         ssrcToUserIdRef.current.clear();
         useVoiceStore.getState().reset();
-
-        try {
-            await window.concord.leaveVoice(roomId);
-        } catch {}
-
-        try {
-            await window.concord.endDMCall(roomId);
-        } catch {}
-
-        if (mountedRef.current) {
-            setState(initialState);
-        }
+        try { await window.concord.leaveVoice(roomId); } catch {}
+        try { await window.concord.endDMCall(roomId); } catch {}
+        if (mountedRef.current) setState(initialState);
     }, [roomId]);
 
     const setMuted = useCallback((muted: boolean) => {
@@ -533,28 +489,28 @@ export function useVoiceClient(roomId: string) {
     }, [roomId, safeSetState]);
 
     const setScreenSharing = useCallback((screenSharing: boolean) => {
-        const currentMuted = stateRef.current.muted;
-        const currentVideo = stateRef.current.videoEnabled;
         safeSetState(prev => ({ ...prev, screenSharing }));
         useVoiceStore.getState().setScreenSharing(screenSharing);
-        window.concord.setVoiceMediaState?.(currentMuted, currentVideo, screenSharing).catch(() => {});
-        window.concord.setMediaPrefs?.(roomId, false, currentVideo, currentMuted, screenSharing).catch(() => {});
+        window.concord.setVoiceMediaState?.(stateRef.current.muted, stateRef.current.videoEnabled, screenSharing).catch(() => {});
+        window.concord.setMediaPrefs?.(roomId, false, stateRef.current.videoEnabled, stateRef.current.muted, screenSharing).catch(() => {});
     }, [roomId, safeSetState]);
+
+    const getSsrcToUserIdMap = useCallback((): Map<number, string> => {
+        return new Map(ssrcToUserIdRef.current);
+    }, []);
 
     const refreshParticipants = useCallback(async () => {
         try {
             const status = await window.concord.getVoiceStatus(roomId);
             if (!status?.participants || !mountedRef.current) return;
-
             const participants = new Map<string, ParticipantState>();
-            const userInfoPromises = status.participants.map(async (p: any) => {
-                const userInfo = await fetchUserInfo(p.user_id);
-                return { ...p, ...userInfo };
-            });
-
-            const enrichedParticipants = await Promise.all(userInfoPromises);
-
-            for (const p of enrichedParticipants) {
+            const enriched = await Promise.all(
+                status.participants.map(async (p: any) => {
+                    const userInfo = await fetchUserInfo(p.user_id);
+                    return { ...p, ...userInfo };
+                })
+            );
+            for (const p of enriched) {
                 const existing = stateRef.current.participants.get(p.user_id);
                 participants.set(p.user_id, {
                     userId: p.user_id,
@@ -569,22 +525,14 @@ export function useVoiceClient(roomId: string) {
                     avatarUrl: p.avatarUrl,
                 });
             }
-
             safeSetState(prev => ({ ...prev, participants }));
-        } catch (err) {
-            console.error('[useVoiceClient] Failed to refresh participants:', err);
-        }
-    }, [roomId, safeSetState, fetchUserInfo]);
-
-    const getSsrcToUserIdMap = useCallback((): Map<number, string> => {
-        return new Map(ssrcToUserIdRef.current);
-    }, []);
+            setTimeout(pushSubscriptions, 100);
+        } catch {}
+    }, [roomId, safeSetState, fetchUserInfo, pushSubscriptions]);
 
     useEffect(() => {
         return () => {
-            cleanupRef.current.forEach(fn => {
-                try { fn(); } catch (e) {}
-            });
+            cleanupRef.current.forEach(fn => { try { fn(); } catch {} });
             cleanupRef.current = [];
         };
     }, []);
@@ -598,6 +546,7 @@ export function useVoiceClient(roomId: string) {
         setVideoEnabled,
         setScreenSharing,
         toggleSubscription,
+        setQualityForSSRC,
         refreshParticipants,
         getSsrcToUserIdMap,
     };

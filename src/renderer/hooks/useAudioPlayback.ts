@@ -227,6 +227,14 @@ export function useAudioPlayback(enabled: boolean, deafened: boolean) {
 
             const ssrc = packet.ssrc >>> 0;
 
+            if (packet.timestamp && packet.pts) {
+                window.__concordAudioClock = window.__concordAudioClock || {};
+                window.__concordAudioClock[ssrc] = {
+                    pts: packet.pts,
+                    wallMs: performance.now(),
+                };
+            }
+
             const EncodedAudioChunkCtor = (globalThis as any).EncodedAudioChunk;
             if (!EncodedAudioChunkCtor) {
                 console.warn('[AudioPlayback] EncodedAudioChunk not available - cannot decode Opus');

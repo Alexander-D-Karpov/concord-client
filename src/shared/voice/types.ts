@@ -64,3 +64,10 @@ export interface ParticipantLeftPayload {
     videoSsrc?: number;
     video_ssrc?: number;
 }
+
+export interface QualityPreference {
+    ssrc: number;
+    tier: number;
+    maxWidth: number;
+    maxHeight: number;
+}

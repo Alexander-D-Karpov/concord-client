@@ -133,6 +133,8 @@ declare global {
             markAsRead?: (roomId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
             markDMAsRead?: (channelId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
             getUnreadCounts?: () => Promise<{ rooms: Array<{ room_id: string; unread_count: number; last_read_message_id: string }>; total_unread: number }>;
+
         };
+        __concordAudioClock?: Record<number, { pts: number; wallMs: number }>;
     }
 }

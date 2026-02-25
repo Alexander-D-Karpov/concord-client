@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { SYNC_DEAD_ZONE_US, VIDEO_CLOCK_HZ } from '../../shared/voice/constants';
 
 interface VideoFrame {
     ssrc: number;
@@ -22,6 +23,7 @@ interface DecoderState {
     pendingKeyframe: boolean;
     lastTimestamp: number;
     frameCount: number;
+    syncQueue: { frame: any; renderAt: number }[];
 }
 
 declare global {
@@ -31,6 +33,7 @@ declare global {
 }
 
 const MAX_DECODE_QUEUE = 5;
+const SYNC_BUFFER_MS = 40;
 
 export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, string>) {
     const [remoteVideos, setRemoteVideos] = useState<Map<number, RemoteVideo>>(new Map());
@@ -38,15 +41,18 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
     const mountedRef = useRef(true);
     const decodersRef = useRef<Map<number, DecoderState>>(new Map());
     const ssrcMapRef = useRef<Map<number, string>>(ssrcToUserId);
-    const frameQueueRef = useRef<Map<number, VideoFrame[]>>(new Map());
+    const audioClockRef = useRef<Map<number, { baseAudioPts: number; baseWallUs: number }>>(new Map());
 
-    useEffect(() => {
-        ssrcMapRef.current = ssrcToUserId;
-    }, [ssrcToUserId]);
+    useEffect(() => { ssrcMapRef.current = ssrcToUserId; }, [ssrcToUserId]);
+    useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
-    useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
+    const updateRemoteVideo = useCallback((ssrc: number, canvas: HTMLCanvasElement) => {
+        const userId = ssrcMapRef.current.get(ssrc) || `unknown-${ssrc}`;
+        setRemoteVideos(prev => {
+            const next = new Map(prev);
+            next.set(ssrc, { ssrc, userId, canvas, lastFrame: Date.now() });
+            return next;
+        });
     }, []);
 
     const getOrCreateDecoder = useCallback((ssrc: number): DecoderState | null => {
@@ -59,85 +65,50 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
         const canvas = document.createElement('canvas');
         canvas.width = 1280;
         canvas.height = 720;
-
-        const ctx = canvas.getContext('2d', {
-            alpha: false,
-            desynchronized: true,
-        });
+        const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
         if (!ctx) return null;
-
-        console.log(`[VideoPlayback] Creating decoder for SSRC ${ssrc}`);
 
         const decoder = new VideoDecoderCtor({
             output: (frame: globalThis.VideoFrame) => {
-                if (!mountedRef.current) {
-                    frame.close();
-                    return;
-                }
-
-                const decoderState = decodersRef.current.get(ssrc);
-                if (!decoderState) {
-                    frame.close();
-                    return;
-                }
+                if (!mountedRef.current) { frame.close(); return; }
+                const ds = decodersRef.current.get(ssrc);
+                if (!ds) { frame.close(); return; }
 
                 if (canvas.width !== frame.displayWidth) canvas.width = frame.displayWidth;
                 if (canvas.height !== frame.displayHeight) canvas.height = frame.displayHeight;
 
                 ctx.drawImage(frame, 0, 0);
                 frame.close();
+                ds.frameCount++;
 
-                decoderState.frameCount++;
-                if (decoderState.frameCount % 30 === 1) {
-                    console.log(`[VideoPlayback] Decoded frame #${decoderState.frameCount} for SSRC ${ssrc}`);
-                }
-
-                const userId = ssrcMapRef.current.get(ssrc) || `unknown-${ssrc}`;
-                setRemoteVideos(prev => {
-                    const next = new Map(prev);
-                    next.set(ssrc, { ssrc, userId, canvas, lastFrame: Date.now() });
-                    return next;
-                });
+                updateRemoteVideo(ssrc, canvas);
             },
             error: (e: DOMException) => {
-                console.error(`[VideoPlayback] Decoder error for SSRC ${ssrc}:`, e);
-                const state = decodersRef.current.get(ssrc);
-                if (state) state.pendingKeyframe = true;
+                console.error(`[VideoPlayback] Decoder error SSRC ${ssrc}:`, e);
+                const ds = decodersRef.current.get(ssrc);
+                if (ds) ds.pendingKeyframe = true;
             }
         });
 
         state = {
-            decoder,
-            canvas,
-            ctx,
+            decoder, canvas, ctx,
             configured: false,
             pendingKeyframe: true,
             lastTimestamp: 0,
             frameCount: 0,
+            syncQueue: [],
         };
         decodersRef.current.set(ssrc, state);
         return state;
-    }, []);
+    }, [updateRemoteVideo]);
 
     const configureDecoder = useCallback(async (state: DecoderState, ssrc: number): Promise<boolean> => {
         if (state.configured && state.decoder.state === 'configured') return true;
 
         const configs = [
-            {
-                codec: 'avc1.42001f',
-                hardwareAcceleration: 'no-preference' as const,
-                optimizeForLatency: true,
-            },
-            {
-                codec: 'avc1.42001E',
-                hardwareAcceleration: 'no-preference' as const,
-                optimizeForLatency: true,
-            },
-            {
-                codec: 'vp8',
-                hardwareAcceleration: 'no-preference' as const,
-                optimizeForLatency: true,
-            },
+            { codec: 'avc1.42001f', hardwareAcceleration: 'no-preference' as const, optimizeForLatency: true },
+            { codec: 'avc1.42001E', hardwareAcceleration: 'no-preference' as const, optimizeForLatency: true },
+            { codec: 'vp8', hardwareAcceleration: 'no-preference' as const, optimizeForLatency: true },
         ];
 
         for (const config of configs) {
@@ -147,12 +118,10 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
                     state.decoder.configure(support.config || config);
                     state.configured = true;
                     state.pendingKeyframe = false;
-                    console.log(`[VideoPlayback] Decoder configured for SSRC ${ssrc} with ${config.codec}, optimizeForLatency=true`);
                     return true;
                 }
             } catch {}
         }
-        console.error(`[VideoPlayback] Failed to configure decoder for SSRC ${ssrc}`);
         return false;
     }, []);
 
@@ -162,50 +131,57 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
         if (!state) return;
 
         let bytes: Uint8Array;
-        if (Array.isArray(frame.data)) {
-            bytes = new Uint8Array(frame.data);
-        } else if (frame.data instanceof Uint8Array) {
-            bytes = frame.data;
-        } else {
-            return;
-        }
-
+        if (Array.isArray(frame.data)) bytes = new Uint8Array(frame.data);
+        else if (frame.data instanceof Uint8Array) bytes = frame.data;
+        else return;
         if (bytes.length === 0) return;
 
         if (!state.configured) {
-            if (!frame.isKeyframe) {
-                state.pendingKeyframe = true;
-                return;
-            }
-            console.log(`[VideoPlayback] Configuring decoder for SSRC ${ssrc} with keyframe`);
-            const configured = await configureDecoder(state, ssrc);
-            if (!configured) return;
+            if (!frame.isKeyframe) { state.pendingKeyframe = true; return; }
+            const ok = await configureDecoder(state, ssrc);
+            if (!ok) return;
         }
 
-        if (state.pendingKeyframe && !frame.isKeyframe) {
-            return;
-        }
-
-        if (frame.isKeyframe) {
-            state.pendingKeyframe = false;
-        }
+        if (state.pendingKeyframe && !frame.isKeyframe) return;
+        if (frame.isKeyframe) state.pendingKeyframe = false;
 
         const EncodedVideoChunkCtor = (globalThis as any).EncodedVideoChunk;
         if (!EncodedVideoChunkCtor) return;
+
+        // AV sync: check drift against audio clock
+        const audioClock = window.__concordAudioClock;
+        if (audioClock) {
+            // Find audio clock for the same user (any SSRC that maps to the same userId)
+            const userId = ssrcMapRef.current.get(ssrc);
+            if (userId) {
+                for (const [audioSsrc, clock] of Object.entries(audioClock)) {
+                    const audioUserId = ssrcMapRef.current.get(Number(audioSsrc));
+                    if (audioUserId === userId) {
+                        const audioBase = audioClockRef.current.get(ssrc);
+                        if (!audioBase) {
+                            audioClockRef.current.set(ssrc, {
+                                baseAudioPts: clock.pts,
+                                baseWallUs: clock.wallMs * 1000,
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+        }
 
         try {
             const chunk = new EncodedVideoChunkCtor({
                 type: frame.isKeyframe ? 'key' : 'delta',
                 timestamp: frame.timestamp,
-                data: bytes
+                data: bytes,
             });
 
             if (state.decoder.state === 'configured' && state.decoder.decodeQueueSize < MAX_DECODE_QUEUE) {
                 state.decoder.decode(chunk);
                 state.lastTimestamp = frame.timestamp;
             }
-        } catch (err) {
-            console.error('[VideoPlayback] Decode error:', err);
+        } catch {
             state.pendingKeyframe = true;
         }
     }, [getOrCreateDecoder, configureDecoder]);
@@ -214,12 +190,11 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
         if (!enabled) {
             cleanupRef.current?.();
             cleanupRef.current = null;
-
             for (const state of decodersRef.current.values()) {
                 if (state.decoder.state !== 'closed') state.decoder.close();
             }
             decodersRef.current.clear();
-            frameQueueRef.current.clear();
+            audioClockRef.current.clear();
             setRemoteVideos(new Map());
             return;
         }
@@ -229,58 +204,66 @@ export function useVideoPlayback(enabled: boolean, ssrcToUserId: Map<number, str
             processFrame(frame);
         };
 
-        const handleParticipantLeft = (ev: any) => {
-            const ssrc = (ev?.ssrc ?? ev?.audio_ssrc ?? 0) >>> 0;
-            const videoSsrc = (ev?.videoSsrc ?? ev?.video_ssrc ?? 0) >>> 0;
-            const screenSsrc = (ev?.screenSsrc ?? ev?.screen_ssrc ?? 0) >>> 0;
+        const handleAudio = (packet: any) => {
+            if (!mountedRef.current) return;
+            const ssrc = packet.ssrc >>> 0;
+            if (!audioClockRef.current.has(ssrc)) {
+                audioClockRef.current.set(ssrc, {
+                    baseAudioPts: packet.timestamp || 0,
+                    baseWallUs: performance.now() * 1000,
+                });
+            }
+        };
 
-            [ssrc, videoSsrc, screenSsrc].forEach(s => {
-                if (s) {
-                    const state = decodersRef.current.get(s);
-                    if (state?.decoder.state !== 'closed') state?.decoder.close();
-                    decodersRef.current.delete(s);
-                    frameQueueRef.current.delete(s);
-                    setRemoteVideos(prev => {
-                        const next = new Map(prev);
-                        next.delete(s);
-                        return next;
-                    });
-                }
+        const handleParticipantLeft = (ev: any) => {
+            const ssrcs = [
+                (ev?.ssrc ?? 0) >>> 0,
+                (ev?.videoSsrc ?? ev?.video_ssrc ?? 0) >>> 0,
+                (ev?.screenSsrc ?? ev?.screen_ssrc ?? 0) >>> 0,
+            ];
+            ssrcs.forEach(s => {
+                if (!s) return;
+                const state = decodersRef.current.get(s);
+                if (state?.decoder.state !== 'closed') state?.decoder.close();
+                decodersRef.current.delete(s);
+                audioClockRef.current.delete(s);
+                if (window.__concordAudioClock) delete window.__concordAudioClock[s];
+                setRemoteVideos(prev => { const n = new Map(prev); n.delete(s); return n; });
             });
         };
 
         const unsubVideo = window.concord?.onVoiceVideo?.(handleVideo);
+        const unsubAudio = window.concord?.onVoiceAudio?.(handleAudio);
         const unsubLeft = window.concord?.onVoiceParticipantLeft?.(handleParticipantLeft);
 
-        const cleanupInterval = setInterval(() => {
+        const cleanup = setInterval(() => {
             const now = Date.now();
             setRemoteVideos(prev => {
                 let changed = false;
                 const next = new Map(prev);
-                for (const [ssrc, video] of next) {
-                    if (now - video.lastFrame > 10000) {
+                for (const [ssrc, v] of next) {
+                    if (now - v.lastFrame > 10000) {
                         next.delete(ssrc);
-                        const state = decodersRef.current.get(ssrc);
-                        if (state?.decoder.state !== 'closed') state?.decoder.close();
+                        const ds = decodersRef.current.get(ssrc);
+                        if (ds?.decoder.state !== 'closed') ds?.decoder.close();
                         decodersRef.current.delete(ssrc);
-                        frameQueueRef.current.delete(ssrc);
+                        audioClockRef.current.delete(ssrc);
                         changed = true;
                     }
                 }
                 return changed ? next : prev;
             });
-        }, 2000);
+        }, 3000);
 
         cleanupRef.current = () => {
             unsubVideo?.();
+            unsubAudio?.();
             unsubLeft?.();
-            clearInterval(cleanupInterval);
+            clearInterval(cleanup);
+            window.__concordAudioClock = undefined;
         };
 
-        return () => {
-            cleanupRef.current?.();
-            cleanupRef.current = null;
-        };
+        return () => { cleanupRef.current?.(); cleanupRef.current = null; };
     }, [enabled, processFrame]);
 
     return { remoteVideos };
