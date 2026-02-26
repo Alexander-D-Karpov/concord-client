@@ -125,7 +125,17 @@ contextBridge.exposeInMainWorld('concord', {
         ipcRenderer.on('voice:participant-left', handler);
         return () => ipcRenderer.removeListener('voice:participant-left', handler);
     },
-
+    onVoiceQuality: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:quality', handler);
+        return () => ipcRenderer.removeListener('voice:quality', handler);
+    },
+    onVoicePeerQuality: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:peer-quality', handler);
+        return () => ipcRenderer.removeListener('voice:peer-quality', handler);
+    },
+    getVoiceQuality: () => ipcRenderer.invoke('voice:getQuality'),
     onVoiceMediaState: (cb: (data: any) => void) => {
         const handler = (_e: any, data: any) => cb(data);
         ipcRenderer.on('voice:media-state', handler);

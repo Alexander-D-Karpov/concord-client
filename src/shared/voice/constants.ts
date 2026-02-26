@@ -3,7 +3,7 @@ export const PROTOCOL_VERSION = 1;
 export const AUTH_TAG_SIZE = 16;
 export const MEDIA_HEADER_SIZE = 24;
 export const FRAG_HEADER_SIZE = 12;
-export const MTU = 1400;
+export const MTU = 1200;
 export const MAX_FRAG_PAYLOAD = MTU - MEDIA_HEADER_SIZE - FRAG_HEADER_SIZE - AUTH_TAG_SIZE;
 
 export const PacketType = {
@@ -22,6 +22,7 @@ export const PacketType = {
     PARTICIPANT_LEFT: 0x0d,
     SUBSCRIBE: 0x0e,
     QUALITY_PREF: 0x0f,
+    PACKET_TYPE_QUALITY_REPORT: 0x10,
 } as const;
 
 export type PacketType = typeof PacketType[keyof typeof PacketType];
@@ -59,3 +60,14 @@ export const VIDEO_CLOCK_HZ = 90_000;
 export const KEYFRAME_INTERVAL_FRAMES = 90;
 export const KEYFRAME_INTERVAL_SCREEN = 45;
 export const MAX_QP = 36;
+
+export const ConnectionQuality = {
+    GOOD: 3,
+    MEDIUM: 2,
+    POOR: 1,
+    UNKNOWN: 0,
+} as const;
+
+export type ConnectionQuality = typeof ConnectionQuality[keyof typeof ConnectionQuality];
+
+export const PacketTypeQualityReport = 0x10;

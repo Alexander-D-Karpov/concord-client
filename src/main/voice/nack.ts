@@ -68,7 +68,7 @@ export class NackTracker {
     private lastNackTime = new Map<number, number>();
     private minInterval: number;
 
-    constructor(minIntervalMs = 50) {
+    constructor(minIntervalMs = 100) {
         this.minInterval = minIntervalMs;
     }
 

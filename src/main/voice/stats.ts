@@ -1,3 +1,5 @@
+import { ConnectionQuality } from '../../shared/voice/constants';
+
 export interface StreamStats {
     ssrc: number;
 
@@ -20,7 +22,7 @@ class SeqGapTracker {
     private windowLimit: number;
     private graceMs: number;
 
-    constructor(windowLimit = 256, graceMs = 35) {
+    constructor(windowLimit = 256, graceMs = 80) {
         this.windowLimit = windowLimit;
         this.graceMs = graceMs;
     }
@@ -201,6 +203,50 @@ export class StatsCollector {
         const total = s.packetsReceived + missing;
         if (total <= 0) return 0;
         return missing / total;
+    }
+
+    calculateStreamQuality(ssrc: number): number {
+        const stats = this.streams.get(ssrc);
+        if (!stats) return ConnectionQuality.UNKNOWN;
+
+        const loss = this.getFractionLost(ssrc);
+        const jitter = stats.jitterMs;
+        const timeSinceLast = Date.now() - stats.lastPacketTime;
+
+        if (timeSinceLast > 5000) return ConnectionQuality.UNKNOWN;
+
+        if (loss < 0.02 && jitter < 30) return ConnectionQuality.GOOD;
+        if (loss < 0.05 && jitter < 50) return ConnectionQuality.MEDIUM;
+        return ConnectionQuality.POOR;
+    }
+
+    calculateLocalQuality(rttMs: number): number {
+        const avgLoss = this.getAverageLoss();
+        const avgJitter = this.getAverageJitter();
+
+        if (rttMs < 100 && avgLoss < 0.02 && avgJitter < 30) return ConnectionQuality.GOOD;
+        if (rttMs < 250 && avgLoss < 0.05 && avgJitter < 50) return ConnectionQuality.MEDIUM;
+        return ConnectionQuality.POOR;
+    }
+
+    private getAverageLoss(): number {
+        let total = 0;
+        let count = 0;
+        for (const [ssrc] of this.streams) {
+            total += this.getFractionLost(ssrc);
+            count++;
+        }
+        return count > 0 ? total / count : 0;
+    }
+
+    private getAverageJitter(): number {
+        let total = 0;
+        let count = 0;
+        for (const stats of this.streams.values()) {
+            total += stats.jitterMs;
+            count++;
+        }
+        return count > 0 ? total / count : 0;
     }
 
     reset(): void {

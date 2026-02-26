@@ -11,6 +11,7 @@ export interface VoiceStoreParticipant {
     speaking: boolean;
     displayName?: string;
     avatarUrl?: string;
+    connectionQuality?: number;
 }
 
 interface VoiceStoreState {
@@ -28,6 +29,7 @@ interface VoiceStoreState {
     localVideoSsrc?: number;
     localScreenSsrc?: number;
     disabledSSRCs: Set<number>;
+    localQuality: number;
 
     setConnected: (connected: boolean) => void;
     setConnecting: (connecting: boolean) => void;
@@ -60,6 +62,7 @@ const initialState = {
     localVideoSsrc: undefined as number | undefined,
     localScreenSsrc: undefined as number | undefined,
     disabledSSRCs: new Set<number>(),
+    localQuality: 0,
 };
 
 export const useVoiceStore = create<VoiceStoreState>((set, get) => ({

@@ -147,17 +147,14 @@ export function useAudioPlayback(enabled: boolean, deafened: boolean) {
 
             try {
                 const decoder = new AudioDecoderCtor({
-                    output: (audioData: AudioData) => {
+                    output: (audioData: any) => {
                         if (!mountedRef.current || !workletRef.current) {
                             audioData.close();
                             return;
                         }
-
                         try {
                             const numFrames = audioData.numberOfFrames;
-                            const numChannels = audioData.numberOfChannels;
                             const samples = new Float32Array(numFrames);
-
                             audioData.copyTo(samples, { planeIndex: 0 });
                             workletRef.current.port.postMessage({ type: 'samples', samples });
                         } finally {
@@ -165,8 +162,18 @@ export function useAudioPlayback(enabled: boolean, deafened: boolean) {
                         }
                     },
                     error: (e: DOMException) => {
-                        console.error(`[AudioPlayback] Decoder error for SSRC ${ssrc}:`, e.message);
-                        decodersRef.current.delete(ssrc);
+                        console.error(`[AudioPlayback] Decoder error SSRC ${ssrc}:`, e);
+                        const ds = decodersRef.current.get(ssrc);
+                        if (ds) {
+                            try {
+                                if (ds.decoder.state !== 'closed') {
+                                    ds.decoder.reset();
+                                    ds.configured = false;
+                                }
+                            } catch {
+                                decodersRef.current.delete(ssrc);
+                            }
+                        }
                     }
                 });
 

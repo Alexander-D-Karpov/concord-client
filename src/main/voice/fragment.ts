@@ -57,30 +57,37 @@ export class Reassembler {
     private lastCleanup = 0;
     private completedFrames = 0;
     private droppedFrames = 0;
+    private needsKeyframe = true;
+    private lastEmittedFrameId = -1;
+    private consecutiveDrops = 0;
 
     constructor(maxAgeMs = 1000, maxFrames = 120) {
         this.maxAge = maxAgeMs;
         this.maxFrames = maxFrames;
     }
 
+    requestKeyframe(): void {
+        this.needsKeyframe = true;
+    }
+
     addFragment(payload: Buffer, isKeyframe: boolean): ReassembledFrame | null {
-        if (payload.length < FRAG_HEADER_SIZE) {
-            return null;
-        }
+        if (payload.length < FRAG_HEADER_SIZE) return null;
 
         const header = decodeFragmentHeader(new Uint8Array(payload.buffer, payload.byteOffset, FRAG_HEADER_SIZE));
         if (!header) return null;
 
         const { frameId, fragIndex, fragCount, frameLength } = header;
-
-        if (fragCount === 0 || fragIndex >= fragCount) {
-            return null;
-        }
+        if (fragCount === 0 || fragIndex >= fragCount) return null;
 
         const now = Date.now();
         if (now - this.lastCleanup > 200) {
             this.cleanup(now);
             this.lastCleanup = now;
+        }
+
+        const existingMeta = this.frameMeta.get(frameId);
+        if (this.needsKeyframe && !isKeyframe && !existingMeta?.isKeyframe) {
+            return null;
         }
 
         if (!this.frames.has(frameId)) {
@@ -105,18 +112,11 @@ export class Reassembler {
 
         const frameFrags = this.frames.get(frameId)!;
         const meta = this.frameMeta.get(frameId)!;
-
-        if (isKeyframe) {
-            meta.isKeyframe = true;
-        }
+        if (isKeyframe) meta.isKeyframe = true;
 
         const fragData = payload.subarray(FRAG_HEADER_SIZE);
-
         frameFrags.set(fragIndex, {
-            frameId,
-            fragIndex,
-            fragCount,
-            frameLength,
+            frameId, fragIndex, fragCount, frameLength,
             data: Buffer.from(fragData),
             receivedAt: now,
         });
@@ -132,6 +132,7 @@ export class Reassembler {
     private assembleFrame(frameId: number): ReassembledFrame | null {
         const frameFrags = this.frames.get(frameId);
         const meta = this.frameMeta.get(frameId);
+        this.consecutiveDrops = 0;
         if (!frameFrags || !meta) return null;
 
         const { fragCount, frameLength, isKeyframe } = meta;
@@ -143,6 +144,7 @@ export class Reassembler {
             if (!frag) {
                 this.frames.delete(frameId);
                 this.frameMeta.delete(frameId);
+                this.needsKeyframe = true;
                 return null;
             }
             frag.data.copy(frameData, offset);
@@ -152,22 +154,31 @@ export class Reassembler {
         this.frames.delete(frameId);
         this.frameMeta.delete(frameId);
 
+        if (isKeyframe) {
+            this.needsKeyframe = false;
+        }
+
+        this.lastEmittedFrameId = frameId;
         return { frameId, data: frameData, isKeyframe };
     }
 
     private cleanup(now: number): void {
         const toDelete: number[] = [];
-
         for (const [frameId, meta] of this.frameMeta) {
             if (now - meta.firstFragTime > this.maxAge) {
                 toDelete.push(frameId);
             }
         }
-
         for (const id of toDelete) {
             this.frames.delete(id);
             this.frameMeta.delete(id);
             this.droppedFrames++;
+        }
+        if (toDelete.length > 0) {
+            this.consecutiveDrops += toDelete.length;
+            if (this.consecutiveDrops >= 3) {
+                this.needsKeyframe = true;
+            }
         }
     }
 
@@ -176,6 +187,7 @@ export class Reassembler {
             pendingFrames: this.frames.size,
             completedFrames: this.completedFrames,
             droppedFrames: this.droppedFrames,
+            needsKeyframe: this.needsKeyframe,
         };
     }
 }

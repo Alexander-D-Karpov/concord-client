@@ -95,6 +95,10 @@ declare global {
             onLocalSpeaking?: (cb: (speaking: boolean) => void) => () => void;
             onVoiceMediaState?: (cb: (data: any) => void) => () => void;
             setVoiceMediaState: (muted: boolean, videoEnabled: boolean, screenSharing: boolean) => Promise<any>;
+            onVoiceQuality?: (cb: (data: any) => void) => () => void;
+            onVoicePeerQuality?: (cb: (data: any) => void) => () => void;
+            getVoiceQuality?: () => Promise<{ quality: number }>;
+
             // Friends
             sendFriendRequest(userId: string): Promise<any>;
             acceptFriendRequest(requestId: string): Promise<any>;

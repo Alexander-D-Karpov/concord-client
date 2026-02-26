@@ -3,10 +3,10 @@ import { useVoiceStore } from '../hooks/useVoiceStore';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useDMStore } from '../hooks/useDMStore';
 import { useNavigate } from 'react-router-dom';
+import ConnectionBars from './ConnectionBars';
 
 const VoiceBar: React.FC = () => {
-    const { connected, connecting, roomId, isDM, muted, deafened, setMuted, setDeafened } = useVoiceStore();
-    const { rooms, setCurrentRoom } = useRoomsStore();
+    const { connected, connecting, roomId, isDM, muted, deafened, setMuted, setDeafened, localQuality } = useVoiceStore();    const { rooms, setCurrentRoom } = useRoomsStore();
     const { channels, setCurrentChannel } = useDMStore();
     const navigate = useNavigate();
 
@@ -55,6 +55,7 @@ const VoiceBar: React.FC = () => {
             <button onClick={handleClick} className="flex items-center space-x-2 min-w-0 hover:bg-dark-700 rounded px-2 py-1 transition">
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${connecting ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
                 <span className="text-white text-sm font-medium truncate">{connecting ? 'Connecting...' : roomName}</span>
+                {connected && <ConnectionBars quality={localQuality} size="sm" />}
             </button>
 
             <div className="flex items-center space-x-1">

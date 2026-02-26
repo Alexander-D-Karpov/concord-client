@@ -19,6 +19,7 @@ export interface ParticipantState {
     displayName?: string;
     avatarUrl?: string;
     qualityTier?: number;
+    connectionQuality?: number;
 }
 
 export interface VoiceClientState {
@@ -35,6 +36,8 @@ export interface VoiceClientState {
     localScreenSsrc?: number;
     disabledSSRCs: Set<number>;
     qualityPrefs: Map<number, number>;
+    localQuality: number;
+    localRtt: number;
 }
 
 const initialState: VoiceClientState = {
@@ -48,6 +51,8 @@ const initialState: VoiceClientState = {
     participants: new Map(),
     disabledSSRCs: new Set(),
     qualityPrefs: new Map(),
+    localQuality: 0,
+    localRtt: 0,
 };
 
 export function useVoiceClient(roomId: string) {
@@ -68,6 +73,8 @@ export function useVoiceClient(roomId: string) {
                 localScreenSsrc: store.localScreenSsrc,
                 disabledSSRCs: new Set(store.disabledSSRCs),
                 qualityPrefs: new Map(),
+                localQuality: 0,
+                localRtt: 0,
             };
         }
         return initialState;
@@ -185,6 +192,54 @@ export function useVoiceClient(roomId: string) {
                         audioSsrc: ssrc || existing.audioSsrc,
                         videoSsrc: videoSsrc || existing.videoSsrc,
                     });
+                }
+                return { ...prev, participants };
+            });
+        });
+
+        const unsubQuality = window.concord.onVoiceQuality?.((data: any) => {
+            if (!mountedRef.current) return;
+            safeSetState(prev => {
+                const participants = new Map(prev.participants);
+                const peers: Record<number, number> = data.peers || {};
+                const peerUsers: Record<string, number> = data.peerUsers || {};
+
+                for (const [uid, q] of Object.entries(peerUsers)) {
+                    const existing = participants.get(uid);
+                    if (existing) {
+                        participants.set(uid, { ...existing, connectionQuality: q as number });
+                    }
+                }
+
+                for (const [ssrcStr, q] of Object.entries(peers)) {
+                    const ssrc = Number(ssrcStr);
+                    const uid = ssrcToUserIdRef.current.get(ssrc);
+                    if (uid) {
+                        const existing = participants.get(uid);
+                        if (existing && (existing.connectionQuality === undefined || existing.connectionQuality === 0)) {
+                            participants.set(uid, { ...existing, connectionQuality: q as number });
+                        }
+                    }
+                }
+
+                return {
+                    ...prev,
+                    localQuality: data.local ?? prev.localQuality,
+                    localRtt: data.rttMs ?? prev.localRtt,
+                    participants,
+                };
+            });
+        });
+
+        const unsubPeerQuality = window.concord.onVoicePeerQuality?.((data: any) => {
+            if (!mountedRef.current) return;
+            const uid = data.userId;
+            if (!uid) return;
+            safeSetState(prev => {
+                const participants = new Map(prev.participants);
+                const existing = participants.get(uid);
+                if (existing) {
+                    participants.set(uid, { ...existing, connectionQuality: data.quality });
                 }
                 return { ...prev, participants };
             });
@@ -327,6 +382,8 @@ export function useVoiceClient(roomId: string) {
         if (unsubError) cleanups.push(unsubError);
         if (unsubDisconnected) cleanups.push(unsubDisconnected);
         if (unsubReconnected) cleanups.push(unsubReconnected);
+        if (unsubQuality) cleanups.push(unsubQuality);
+        if (unsubPeerQuality) cleanups.push(unsubPeerQuality);
         cleanups.push(() => {
             window.removeEventListener('voice-state-changed', handleVoiceStateChanged as EventListener);
             window.removeEventListener('voice-user-left', handleVoiceUserLeft as EventListener);

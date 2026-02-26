@@ -48,6 +48,7 @@ export class VoiceService extends EventEmitter {
     private nackTracker = new NackTracker();
     private pliTracker = new PliTracker();
     private stats = new StatsCollector();
+    private nackInterval?: NodeJS.Timeout;
 
     private connected = false;
     private connectingPromise: Promise<void> | null = null;
@@ -79,6 +80,10 @@ export class VoiceService extends EventEmitter {
 
     private decryptOk = 0;
     private decryptFail = 0;
+
+    private qualityInterval?: NodeJS.Timeout;
+    private localQuality: number = 0;
+    private peerQualities = new Map<string, number>(); // userId -> quality
 
     private seenFirstVideoFrom = new Set<number>();
 
@@ -171,6 +176,8 @@ export class VoiceService extends EventEmitter {
         this.pliTracker.clear();
         this.stats.reset();
         this.seenFirstVideoFrom.clear();
+        this.peerQualities.clear();
+        this.localQuality = 0;
 
         if (socket && wasConnected && ssrc) {
             const packet = buildByePacket(ssrc);
@@ -209,6 +216,14 @@ export class VoiceService extends EventEmitter {
         if (this.rrInterval) {
             clearInterval(this.rrInterval);
             this.rrInterval = undefined;
+        }
+        if (this.qualityInterval) {
+            clearInterval(this.qualityInterval);
+            this.qualityInterval = undefined;
+        }
+        if (this.nackInterval) {
+            clearInterval(this.nackInterval);
+            this.nackInterval = undefined;
         }
     }
 
@@ -262,7 +277,35 @@ export class VoiceService extends EventEmitter {
             case PacketType.PARTICIPANT_LEFT:
                 this.handleParticipantLeft(msg);
                 break;
+            case PacketType.PACKET_TYPE_QUALITY_REPORT:
+                this.handleQualityReport(msg);
+                break;
         }
+    }
+
+    private startNackInterval(): void {
+        this.nackInterval = setInterval(() => {
+            if (!this.connected || !this.audioSsrc) return;
+
+            for (const [ssrc] of this.ssrcToUserId) {
+                if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
+
+                const missing = this.stats.getMissingSequences(ssrc, 16);
+                if (missing.length > 0 && this.nackTracker.shouldSendNack(ssrc)) {
+                    const packet = buildNackPacket(ssrc, missing);
+                    this.send(Buffer.from(packet));
+                }
+
+                const reassembler = this.reassemblers.get(ssrc);
+                if (reassembler) {
+                    const rStats = reassembler.getStats();
+                    if (rStats.needsKeyframe && this.pliTracker.shouldSendPli(ssrc)) {
+                        const packet = buildPliPacket(ssrc);
+                        this.send(Buffer.from(packet));
+                    }
+                }
+            }
+        }, 40);
     }
 
     private handleWelcome(msg: Buffer): void {
@@ -315,6 +358,8 @@ export class VoiceService extends EventEmitter {
 
             this.startPingInterval();
             this.startRRInterval();
+            this.startQualityInterval();
+            this.startNackInterval();
 
             this.connectResolve?.();
             this.connectResolve = undefined;
@@ -331,6 +376,61 @@ export class VoiceService extends EventEmitter {
         } catch (err) {
             console.error("[VoiceService] Failed to parse welcome:", err);
         }
+    }
+
+    private startQualityInterval(): void {
+        this.qualityInterval = setInterval(() => {
+            if (!this.connected || !this.audioSsrc) return;
+
+            const rtt = this.stats.getStats().rttMs;
+            this.localQuality = this.stats.calculateLocalQuality(rtt);
+
+            const perPeer = new Map<number, number>();
+            for (const [ssrc] of this.ssrcToUserId) {
+                if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
+                perPeer.set(ssrc, this.stats.calculateStreamQuality(ssrc));
+            }
+
+            this.emit("quality", {
+                local: this.localQuality,
+                rttMs: rtt,
+                peers: Object.fromEntries(perPeer),
+                peerUsers: Object.fromEntries(this.peerQualities),
+            });
+
+            const payload = JSON.stringify({
+                ssrc: this.audioSsrc,
+                user_id: this.config.userId,
+                room_id: this.config.roomId,
+                quality: this.localQuality,
+                rtt_ms: rtt,
+                packet_loss: this.stats.getStats().totalPacketsReceived > 0
+                    ? 0 : 0,
+                jitter_ms: 0,
+            });
+            const jsonBytes = new TextEncoder().encode(payload);
+            const packet = new Uint8Array(1 + jsonBytes.length);
+            packet[0] = 0x10;
+            packet.set(jsonBytes, 1);
+            this.send(Buffer.from(packet));
+        }, 2000);
+    }
+
+    private handleQualityReport(msg: Buffer): void {
+        try {
+            const json = msg.slice(1).toString("utf8");
+            const data = JSON.parse(json);
+            const userId = data.user_id || data.userId;
+            if (!userId) return;
+            const quality = data.quality ?? 0;
+            this.peerQualities.set(userId, quality);
+
+            this.emit("peer-quality", { userId, quality, rttMs: data.rtt_ms });
+        } catch {}
+    }
+
+    getLocalQuality(): number {
+        return this.localQuality;
     }
 
     private replayKey(keyId: number, ssrc: number): string {
@@ -705,7 +805,7 @@ export class VoiceService extends EventEmitter {
         this.retransmitCache.store(header.ssrc, sequence, packet);
         this.stats.recordPacketSent(packet.length);
 
-        if (packet.length > 1500) {
+        if (packet.length > 1200) {
             console.warn(`[VoiceService] Packet exceeds MTU: ${packet.length}`);
             return;
         }

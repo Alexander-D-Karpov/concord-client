@@ -277,6 +277,14 @@ function setupVoiceClientListeners() {
         mainWindow?.webContents.send('voice:disconnected');
     });
 
+    voiceClient.on('quality', (data) => {
+        mainWindow?.webContents.send('voice:quality', data);
+    });
+
+    voiceClient.on('peer-quality', (data) => {
+        mainWindow?.webContents.send('voice:peer-quality', data);
+    });
+
     voiceClient.on('audio', (data) => {
         mainWindow?.webContents.send('voice:audio', {
             ssrc: data.ssrc,
@@ -650,6 +658,10 @@ function setupIPC() {
         }
 
         return { success: true };
+    });
+
+    handleIpc('voice:getQuality', async () => {
+        return { quality: voiceClient?.getLocalQuality() ?? 0 };
     });
 
     ipcMain.on('voice:sendAudio', (_e, data: Uint8Array) => {

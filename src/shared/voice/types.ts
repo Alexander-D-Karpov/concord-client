@@ -71,3 +71,12 @@ export interface QualityPreference {
     maxWidth: number;
     maxHeight: number;
 }
+
+export interface QualityReport {
+    userId: string;
+    ssrc: number;
+    quality: number; // ConnectionQuality value
+    rttMs: number;
+    packetLoss: number;
+    jitterMs: number;
+}

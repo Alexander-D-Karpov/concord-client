@@ -1,5 +1,8 @@
 import { MEDIA_HEADER_SIZE, FRAG_HEADER_SIZE, PacketType } from './constants';
 import type { MediaHeader, FragmentHeader } from './types';
+import { ConnectionQuality } from './constants';
+
+const PacketTypeQualityReport = 0x10;
 
 export function encodeMediaHeader(header: MediaHeader): Uint8Array {
     const buf = new Uint8Array(MEDIA_HEADER_SIZE);
@@ -187,6 +190,23 @@ export function buildSubscribePacket(ssrcs: number[]): Uint8Array {
     const jsonBytes = new TextEncoder().encode(payload);
     const packet = new Uint8Array(1 + jsonBytes.length);
     packet[0] = PacketType.SUBSCRIBE;
+    packet.set(jsonBytes, 1);
+    return packet;
+}
+
+export function buildQualityReportPacket(payload: {
+    ssrc: number;
+    user_id: string;
+    room_id: string;
+    quality: number;
+    rtt_ms: number;
+    packet_loss: number;
+    jitter_ms: number;
+}): Uint8Array {
+    const json = JSON.stringify(payload);
+    const jsonBytes = new TextEncoder().encode(json);
+    const packet = new Uint8Array(1 + jsonBytes.length);
+    packet[0] = PacketTypeQualityReport;
     packet.set(jsonBytes, 1);
     return packet;
 }

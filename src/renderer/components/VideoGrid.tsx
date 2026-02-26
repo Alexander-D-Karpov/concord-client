@@ -4,6 +4,7 @@ import { useAuthStore } from '../hooks/useAuthStore';
 import { useVideoCapture } from '../hooks/useVideoCapture';
 import { useVideoPlayback } from '../hooks/useVideoPlayback';
 import ScreenSourcePicker from './ScreenSourcePicker';
+import ConnectionBars from './ConnectionBars';
 
 interface VideoGridProps {
     roomId: string;
@@ -17,6 +18,7 @@ interface VideoGridProps {
     toggleSubscription: (ssrc: number) => void;
     isFullscreenCall?: boolean;
     onToggleFullscreen?: () => void;
+    localQuality?: number;
 }
 
 interface VideoTileProps {
@@ -31,6 +33,7 @@ interface VideoTileProps {
     videoEnabled: boolean;
     videoStream?: MediaStream | null;
     videoCanvas?: HTMLCanvasElement | null;
+    connectionQuality?: number;
 
     // Screen Share State
     isScreenShare?: boolean;
@@ -55,6 +58,7 @@ const VideoTile: React.FC<VideoTileProps> = ({
                                                  videoEnabled,
                                                  videoStream,
                                                  videoCanvas,
+                                                 connectionQuality,
                                                  isScreenShare,
                                                  isSubscribed = true,
                                                  onToggleSubscription,
@@ -66,7 +70,6 @@ const VideoTile: React.FC<VideoTileProps> = ({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationRef = useRef<number>();
 
-    // Handle Local Stream (MediaStream)
     useEffect(() => {
         if (videoRef.current && videoStream) {
             videoRef.current.srcObject = videoStream;
@@ -76,7 +79,6 @@ const VideoTile: React.FC<VideoTileProps> = ({
         };
     }, [videoStream]);
 
-    // Handle Remote Stream (Canvas from Decoder)
     useEffect(() => {
         if (!videoCanvas || !canvasRef.current) return;
 
@@ -85,19 +87,15 @@ const VideoTile: React.FC<VideoTileProps> = ({
         if (!ctx) return;
 
         let lastDrawTime = 0;
-        const targetFps = 30;
-        const frameInterval = 1000 / targetFps;
+        const frameInterval = 1000 / 30;
 
         const render = (timestamp: number) => {
             if (!isSubscribed) return;
-
             if (timestamp - lastDrawTime >= frameInterval) {
-                if (videoCanvas.width > 0 && videoCanvas.width !== targetCanvas.width) {
+                if (videoCanvas.width > 0 && videoCanvas.width !== targetCanvas.width)
                     targetCanvas.width = videoCanvas.width;
-                }
-                if (videoCanvas.height > 0 && videoCanvas.height !== targetCanvas.height) {
+                if (videoCanvas.height > 0 && videoCanvas.height !== targetCanvas.height)
                     targetCanvas.height = videoCanvas.height;
-                }
                 ctx.drawImage(videoCanvas, 0, 0);
                 lastDrawTime = timestamp;
             }
@@ -105,7 +103,6 @@ const VideoTile: React.FC<VideoTileProps> = ({
         };
 
         animationRef.current = requestAnimationFrame(render);
-
         return () => {
             if (animationRef.current) cancelAnimationFrame(animationRef.current);
         };
@@ -134,22 +131,23 @@ const VideoTile: React.FC<VideoTileProps> = ({
             onClick={onClick}
         >
             <div className={`${isExpanded ? 'h-full' : sizeClasses[size]} relative bg-dark-800`}>
-                {showVideo ? (
-                    videoStream ? (
-                        <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted={isLocal}
-                            className="w-full h-full object-contain bg-black"
-                        />
-                    ) : (
-                        <canvas
-                            ref={canvasRef}
-                            className="w-full h-full object-contain bg-black"
-                        />
-                    )
-                ) : (
+                {/* Always render video/canvas but hide when not active */}
+                <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted={isLocal}
+                    className="w-full h-full object-contain bg-black absolute inset-0"
+                    style={{ display: showVideo && videoStream ? 'block' : 'none' }}
+                />
+                <canvas
+                    ref={canvasRef}
+                    className="w-full h-full object-contain bg-black absolute inset-0"
+                    style={{ display: showVideo && !videoStream && videoCanvas ? 'block' : 'none' }}
+                />
+
+                {/* Avatar fallback */}
+                {!showVideo && (
                     <div className="absolute inset-0 flex items-center justify-center bg-dark-800">
                         <div className="flex flex-col items-center">
                             {avatarUrl ? (
@@ -168,7 +166,7 @@ const VideoTile: React.FC<VideoTileProps> = ({
                     </div>
                 )}
 
-                {/* Status Badges */}
+                {/* Status Badges  */}
                 <div className="absolute top-2 left-2 flex space-x-1">
                     {isScreenShare && (
                         <div className="px-2 py-1 bg-primary-600/90 rounded text-xs text-white font-medium shadow-sm backdrop-blur-sm">
@@ -177,18 +175,12 @@ const VideoTile: React.FC<VideoTileProps> = ({
                     )}
                 </div>
 
-                {/* Overlay Controls */}
                 {!isLocal && videoEnabled && onToggleSubscription && (
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleSubscription();
-                            }}
+                            onClick={(e) => { e.stopPropagation(); onToggleSubscription(); }}
                             className={`p-1.5 rounded-full backdrop-blur-md transition ${
-                                isSubscribed
-                                    ? 'bg-dark-900/50 text-white hover:bg-red-500/80'
-                                    : 'bg-red-500/80 text-white hover:bg-green-500/80'
+                                isSubscribed ? 'bg-dark-900/50 text-white hover:bg-red-500/80' : 'bg-red-500/80 text-white hover:bg-green-500/80'
                             }`}
                             title={isSubscribed ? "Disable Video" : "Enable Video"}
                         >
@@ -206,13 +198,13 @@ const VideoTile: React.FC<VideoTileProps> = ({
                     </div>
                 )}
 
-                {/* Name Tag */}
+                {/* Name tag */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2 min-w-0">
-                            {/* Only show circle indicator if this specific tile should show speaking */}
                             {!isScreenShare && isSpeaking && <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse flex-shrink-0" />}
                             <span className="text-white text-xs font-medium truncate">{displayName}</span>
+                            <ConnectionBars quality={connectionQuality ?? 0} size="sm" />
                         </div>
                         <div className="flex items-center space-x-1 flex-shrink-0">
                             {isMuted && !isScreenShare && (
@@ -243,6 +235,7 @@ const VideoGrid: React.FC<VideoGridProps> = ({
                                                  toggleSubscription,
                                                  isFullscreenCall = false,
                                                  onToggleFullscreen,
+                                                 localQuality,
                                              }) => {
     const { user } = useAuthStore();
     const [expandedTileKey, setExpandedTileKey] = useState<string | null>(null);
@@ -278,7 +271,8 @@ const VideoGrid: React.FC<VideoGridProps> = ({
         videoEnabled: localVideoEnabled,
         videoStream: localVideoStream,
         isScreenShare: false,
-        ssrc: undefined
+        ssrc: undefined,
+        connectionQuality: localQuality,
     } : null;
 
     // 2. Local Screen Tile
@@ -293,7 +287,8 @@ const VideoGrid: React.FC<VideoGridProps> = ({
         videoEnabled: true,
         videoStream: screenShareStream,
         isScreenShare: true,
-        ssrc: undefined
+        ssrc: undefined,
+        connectionQuality: localQuality,
     } : null;
 
     // 3. Remote Tiles
@@ -318,6 +313,7 @@ const VideoGrid: React.FC<VideoGridProps> = ({
                     isScreenShare: false,
                     isSubscribed: p.videoSsrc ? !disabledSSRCs.has(p.videoSsrc) : true,
                     ssrc: p.videoSsrc,
+                    connectionQuality: p.connectionQuality,
                 });
             }
 
@@ -329,13 +325,14 @@ const VideoGrid: React.FC<VideoGridProps> = ({
                     displayName: `${p.displayName || p.userId.split('-')[0]}'s Screen`,
                     avatarUrl: undefined,
                     isLocal: false,
-                    isSpeaking: !showRemoteCamera && p.speaking, // Highlight if no camera tile
+                    isSpeaking: !showRemoteCamera && p.speaking,
                     isMuted: p.muted,
                     videoEnabled: true,
                     videoCanvas: remoteVideos.get(p.screenSsrc)?.canvas,
                     isScreenShare: true,
                     isSubscribed: !disabledSSRCs.has(p.screenSsrc),
                     ssrc: p.screenSsrc,
+                    connectionQuality: p.connectionQuality,
                 });
             }
 

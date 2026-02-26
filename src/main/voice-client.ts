@@ -59,6 +59,8 @@ export class VoiceClient extends EventEmitter {
         this.service.on("rtt", (rtt) => this.emit("rtt", rtt));
         this.service.on("pli-requested", () => this.emit("pli-requested"));
         this.service.on("decrypt-error", (data) => this.emit("decrypt-error", data));
+        this.service.on("quality", (data) => this.emit("quality", data));
+        this.service.on("peer-quality", (data) => this.emit("peer-quality", data));
     }
 
     async connect(): Promise<void> {
@@ -71,6 +73,10 @@ export class VoiceClient extends EventEmitter {
 
     sendAudio(audioData: Buffer): void {
         this.service.sendAudio(audioData);
+    }
+
+    getLocalQuality(): number {
+        return this.service.getLocalQuality();
     }
 
     sendVideo(videoData: Buffer, isKeyframe: boolean, source: 'camera' | 'screen' = 'camera'): void {
