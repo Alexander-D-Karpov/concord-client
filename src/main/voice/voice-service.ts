@@ -81,6 +81,10 @@ export class VoiceService extends EventEmitter {
     private decryptOk = 0;
     private decryptFail = 0;
 
+    private localMuted = false;
+    private localVideoEnabled = false;
+    private localScreenSharing = false;
+
     private qualityInterval?: NodeJS.Timeout;
     private localQuality: number = 0;
     private peerQualities = new Map<string, number>(); // userId -> quality
@@ -246,6 +250,17 @@ export class VoiceService extends EventEmitter {
         this.send(Buffer.from(packet));
     }
 
+    private startMediaStateInterval(): void {
+        setInterval(() => {
+            if (!this.connected || !this.audioSsrc) return;
+            this.setMediaState(
+                this.config.userId === this.config.userId ? false : false,
+                false,
+                false
+            );
+        }, 2000);
+    }
+
     private handleMessage(msg: Buffer): void {
         if (msg.length < 1) return;
 
@@ -290,6 +305,9 @@ export class VoiceService extends EventEmitter {
             for (const [ssrc] of this.ssrcToUserId) {
                 if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
 
+                const isVideoSsrc = this.isRemoteVideoOrScreen(ssrc);
+                if (!isVideoSsrc) continue; // skip audio SSRCs entirely
+
                 const missing = this.stats.getMissingSequences(ssrc, 16);
                 if (missing.length > 0 && this.nackTracker.shouldSendNack(ssrc)) {
                     const packet = buildNackPacket(ssrc, missing);
@@ -306,6 +324,13 @@ export class VoiceService extends EventEmitter {
                 }
             }
         }, 40);
+    }
+
+    private isRemoteVideoOrScreen(ssrc: number): boolean {
+        for (const p of this.participants.values()) {
+            if (p.videoSsrc === ssrc || p.screenSsrc === ssrc) return true;
+        }
+        return false;
     }
 
     private handleWelcome(msg: Buffer): void {
@@ -413,6 +438,7 @@ export class VoiceService extends EventEmitter {
             packet[0] = 0x10;
             packet.set(jsonBytes, 1);
             this.send(Buffer.from(packet));
+            this.setMediaState(this.localMuted, this.localVideoEnabled, this.localScreenSharing);
         }, 2000);
     }
 
@@ -830,8 +856,10 @@ export class VoiceService extends EventEmitter {
     }
 
     setMediaState(muted: boolean, videoEnabled: boolean, screenSharing: boolean): void {
-
         if (!this.connected || !this.audioSsrc) return;
+        this.localMuted = muted;
+        this.localVideoEnabled = videoEnabled;
+        this.localScreenSharing = screenSharing;
 
         const payload = {
             ssrc: this.audioSsrc,
@@ -843,10 +871,10 @@ export class VoiceService extends EventEmitter {
             video_enabled: videoEnabled,
             screen_sharing: screenSharing,
         };
-
         const packet = buildMediaStatePacket(payload);
         this.send(Buffer.from(packet));
     }
+
 
     requestKeyframe(targetSsrc: number): void {
         if (!this.connected) return;

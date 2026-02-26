@@ -12,23 +12,35 @@ const WORKLET_CODE = `
 class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buffer = new Float32Array(48000 * 4);
+    this.bufferSize = 48000 * 4;
+    this.buffer = new Float32Array(this.bufferSize);
     this.writePos = 0;
     this.readPos = 0;
-    this.bufferedSamples = 0;
+    this.buffered = 0;
+    this.prebufferThreshold = 2400; // 50ms @ 48kHz
+    this.prebuffering = true;
 
     this.port.onmessage = (e) => {
       if (e.data.type === 'samples') {
         const samples = e.data.samples;
-        for (let i = 0; i < samples.length; i++) {
-          this.buffer[this.writePos] = samples[i];
-          this.writePos = (this.writePos + 1) % this.buffer.length;
+        const len = samples.length;
+
+        if (this.buffered + len > this.bufferSize) {
+          const overflow = (this.buffered + len) - this.bufferSize;
+          this.readPos = (this.readPos + overflow) % this.bufferSize;
+          this.buffered -= overflow;
         }
-        this.bufferedSamples = Math.min(this.bufferedSamples + samples.length, this.buffer.length);
+
+        for (let i = 0; i < len; i++) {
+          this.buffer[this.writePos] = samples[i];
+          this.writePos = (this.writePos + 1) % this.bufferSize;
+        }
+        this.buffered += len;
       } else if (e.data.type === 'clear') {
-        this.bufferedSamples = 0;
+        this.buffered = 0;
         this.writePos = 0;
         this.readPos = 0;
+        this.prebuffering = true;
       }
     };
   }
@@ -37,11 +49,25 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     const output = outputs[0][0];
     if (!output) return true;
 
+    if (this.prebuffering) {
+      if (this.buffered < this.prebufferThreshold) {
+        output.fill(0);
+        return true;
+      }
+      this.prebuffering = false;
+    }
+
+    if (this.buffered < 480) {
+      output.fill(0);
+      this.prebuffering = true;
+      return true;
+    }
+
     for (let i = 0; i < output.length; i++) {
-      if (this.bufferedSamples > 0) {
+      if (this.buffered > 0) {
         output[i] = this.buffer[this.readPos];
-        this.readPos = (this.readPos + 1) % this.buffer.length;
-        this.bufferedSamples--;
+        this.readPos = (this.readPos + 1) % this.bufferSize;
+        this.buffered--;
       } else {
         output[i] = 0;
       }

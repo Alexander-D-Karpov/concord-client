@@ -169,7 +169,7 @@ const VoiceControls: React.FC<VoiceControlsProps> = ({ roomId, isDM = false }) =
                             </button>
                         </div>
                     </div>
-                    <div className="text-xs text-dark-400 mb-2">{state.participants.size} other participant {state.participants.size !== 1 ? 's' : ''}</div>
+                    <div className="text-xs text-dark-400 mb-2">{state.participants.size} other participant{state.participants.size !== 1 ? 's' : ''}</div>
                     {!state.muted && (
                         <div className="h-1 bg-dark-600 rounded-full overflow-hidden">
                             <div className="h-full bg-green-500 transition-all duration-75" style={{ width: `${audioLevel}%` }} />
