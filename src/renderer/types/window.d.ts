@@ -5,8 +5,6 @@ declare global {
         concord: {
             getDefaultServerAddress(): Promise<string>;
             initializeClient(accessToken: string, serverAddress?: string, refreshToken?: string, expiresIn?: number): Promise<{ success: boolean }>;
-
-            // Auth
             register(handle: string, password: string, displayName: string, serverAddress?: string): Promise<any>;
             login(handle: string, password: string, serverAddress?: string): Promise<any>;
             loginOAuth(provider: string, code: string, redirectUri: string): Promise<any>;
@@ -14,8 +12,6 @@ declare global {
             refreshToken(refreshToken: string): Promise<any>;
             logout(refreshToken: string): Promise<any>;
             checkAuthStatus(): Promise<{ authenticated: boolean }>;
-
-            // Users
             getSelf(): Promise<any>;
             getUser(userId: string): Promise<any>;
             getUserByHandle(handle: string): Promise<any>;
@@ -23,23 +19,15 @@ declare global {
             listUsersByIds(userIds: string[]): Promise<{ users: any[] }>;
             updateProfile(displayName?: string, avatarUrl?: string, bio?: string): Promise<any>;
             updateStatus(status: string): Promise<any>;
-            uploadAvatar(imageData: ArrayBuffer, filename: string): Promise<{
-                avatar_url: string;
-                thumbnail_url: string;
-                avatar: any;
-            }>;
+            uploadAvatar(imageData: ArrayBuffer, filename: string): Promise<{ avatar_url: string; thumbnail_url: string; avatar: any }>;
             deleteAvatar(avatarId: string): Promise<any>;
             getAvatarHistory(userId: string): Promise<{ avatars: any[] }>;
-
-            // Rooms
             getRooms(): Promise<{ rooms: any[] }>;
             getRoom(roomId: string): Promise<any>;
             createRoom(name: string, region?: string, description?: string, isPrivate?: boolean): Promise<any>;
             updateRoom(roomId: string, name?: string, description?: string, isPrivate?: boolean): Promise<any>;
             deleteRoom(roomId: string): Promise<any>;
             attachVoiceServer(roomId: string, voiceServerId: string): Promise<any>;
-
-            // Membership
             getMembers(roomId: string): Promise<{ members: any[] }>;
             inviteMember(roomId: string, userId: string): Promise<any>;
             acceptRoomInvite(inviteId: string): Promise<any>;
@@ -49,48 +37,43 @@ declare global {
             removeMember(roomId: string, userId: string): Promise<any>;
             setMemberRole(roomId: string, userId: string, role: string): Promise<any>;
             setMemberNickname(roomId: string, nickname: string): Promise<any>;
-
-            // Chat
             getMessages(roomId: string, limit?: number, beforeId?: string): Promise<any>;
             sendMessage(roomId: string, content: string, replyToId?: string, mentions?: string[], attachments?: any[]): Promise<any>;
-            editMessage(messageId: string, content: string): Promise<any>;
-            deleteMessage(messageId: string): Promise<any>;
+            editMessage(roomId: string, messageId: string, content: string): Promise<any>;
+            deleteMessage(roomId: string, messageId: string): Promise<any>;
             pinMessage(roomId: string, messageId: string): Promise<any>;
             unpinMessage(roomId: string, messageId: string): Promise<any>;
             listPinnedMessages(roomId: string): Promise<{ messages: any[] }>;
-            addReaction(messageId: string, emoji: string): Promise<any>;
-            removeReaction(messageId: string, emoji: string): Promise<any>;
+            addReaction(roomId: string, messageId: string, emoji: string): Promise<any>;
+            removeReaction(roomId: string, messageId: string, emoji: string): Promise<any>;
             searchMessages(roomId: string, query: string, limit?: number): Promise<any>;
-            getThread(messageId: string, limit?: number, cursor?: string): Promise<any>;
+            getThread(roomId: string, messageId: string, limit?: number, cursor?: string): Promise<any>;
             startTyping(roomId: string): Promise<any>;
             stopTyping(roomId: string): Promise<any>;
-
-            // Stream
             startEventStream(): Promise<{ success: boolean }>;
             streamAck(eventId: string): Promise<{ success: boolean }>;
             onStreamEvent(cb: (event: any) => void): () => void;
             onStreamError(cb: (err: string) => void): () => void;
             onStreamEnd(cb: () => void): () => void;
-
-            // Voice
-            joinVoice: (roomId: string, audioOnly?: boolean, isDM?: boolean) => Promise<any>;            leaveVoice: (roomId: string) => Promise<any>;
+            joinVoice: (roomId: string, audioOnly?: boolean, isDM?: boolean) => Promise<any>;
+            leaveVoice: (roomId: string) => Promise<any>;
             setMediaPrefs: (roomId: string, audioOnly: boolean, videoEnabled: boolean, muted: boolean, screenSharing: boolean) => Promise<any>;
             getVoiceStatus: (roomId: string) => Promise<any>;
             getVoiceParticipants: () => Promise<{ participants: any[] }>;
             sendVoiceAudio: (data: ArrayBuffer) => Promise<any>;
-            sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean) => Promise<any>;
+            sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean, source: 'camera' | 'screen') => Promise<any>;
             setVoiceSpeaking: (speaking: boolean) => Promise<any>;
+            updateVoiceSubscriptions: (ssrcs: number[]) => Promise<any>;
             isVoiceConnected: () => Promise<{ connected: boolean }>;
-
-            // Voice events
             onVoiceSpeaking?: (cb: (data: any) => void) => () => void;
             onVoiceParticipantJoined?: (cb: (data: any) => void) => () => void;
+            onVoiceParticipantUpdated?: (cb: (data: any) => void) => () => void;
+            onVoiceParticipantLeft?: (cb: (data: any) => void) => () => void;
             onVoiceError?: (cb: (error: string) => void) => () => void;
             onVoiceReconnected?: (cb: () => void) => () => void;
             onVoiceDisconnected?: (cb: () => void) => () => void;
             onVoiceAudio?: (cb: (data: any) => void) => () => void;
             onVoiceVideo?: (cb: (data: any) => void) => () => void;
-            onVoiceSyncDrift?: (cb: (drift: number) => void) => () => void;
             onVoiceRTT?: (cb: (rtt: number) => void) => () => void;
             onLocalSpeaking?: (cb: (speaking: boolean) => void) => () => void;
             onVoiceMediaState?: (cb: (data: any) => void) => () => void;
@@ -98,8 +81,6 @@ declare global {
             onVoiceQuality?: (cb: (data: any) => void) => () => void;
             onVoicePeerQuality?: (cb: (data: any) => void) => () => void;
             getVoiceQuality?: () => Promise<{ quality: number }>;
-
-            // Friends
             sendFriendRequest(userId: string): Promise<any>;
             acceptFriendRequest(requestId: string): Promise<any>;
             rejectFriendRequest(requestId: string): Promise<any>;
@@ -110,16 +91,10 @@ declare global {
             blockUser(userId: string): Promise<any>;
             unblockUser(userId: string): Promise<any>;
             listBlockedUsers(): Promise<{ user_ids: string[] }>;
-
-            // Admin
             kickUser(roomId: string, userId: string): Promise<any>;
             banUser(roomId: string, userId: string, durationSeconds: number): Promise<any>;
             muteUser(roomId: string, userId: string, muted: boolean): Promise<any>;
-
-            // Auth events
             onAuthExpired(cb: () => void): () => void;
-
-            // DM
             getOrCreateDM(userId: string): Promise<any>;
             listDMs(): Promise<any>;
             closeDM(channelId: string): Promise<any>;
@@ -132,12 +107,10 @@ declare global {
             getDMCallStatus(channelId: string): Promise<any>;
             startDMTyping(channelId: string): Promise<any>;
             stopDMTyping(channelId: string): Promise<any>;
-
-            // Read tracking
             markAsRead?: (roomId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
             markDMAsRead?: (channelId: string, messageId: string) => Promise<{ last_read_message_id: string; unread_count: number }>;
             getUnreadCounts?: () => Promise<{ rooms: Array<{ room_id: string; unread_count: number; last_read_message_id: string }>; total_unread: number }>;
-
+            getScreenSources?: () => Promise<any[]>;
         };
         __concordAudioClock?: Record<number, { pts: number; wallMs: number }>;
     }

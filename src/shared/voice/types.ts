@@ -1,5 +1,3 @@
-import { CodecType, PacketType } from "./constants";
-
 export interface CryptoConfig {
     aead: "aes-256-gcm";
     keyId: number;
@@ -17,6 +15,30 @@ export interface ParticipantInfo {
     displayName?: string;
     avatarUrl?: string;
     speaking?: boolean;
+    quality?: number;
+    rttMs?: number;
+    packetLoss?: number;
+    jitterMs?: number;
+}
+
+export interface WelcomePayload {
+    protocol?: number;
+    sessionId?: number;
+    session_id?: number;
+    roomId?: string;
+    room_id?: string;
+    userId?: string;
+    user_id?: string;
+    ssrc: number;
+    videoSsrc?: number;
+    video_ssrc?: number;
+    screenSsrc?: number;
+    screen_ssrc?: number;
+    pingIntervalMs?: number;
+    ping_interval_ms?: number;
+    rrIntervalMs?: number;
+    rr_interval_ms?: number;
+    participants: ParticipantInfo[];
 }
 
 export interface VoiceConfig {
@@ -28,14 +50,6 @@ export interface VoiceConfig {
     codec: { audio: string; video?: string };
     crypto: CryptoConfig;
     participants: ParticipantInfo[];
-}
-
-export interface WelcomePayload {
-    sessionId?: number;
-    ssrc?: number;
-    videoSsrc?: number;
-    screenSsrc?: number;
-    participants?: any[];
 }
 
 export interface MediaHeader {
@@ -57,26 +71,14 @@ export interface FragmentHeader {
 }
 
 export interface ParticipantLeftPayload {
-    userId?: string;
     user_id?: string;
+    userId?: string;
+    room_id?: string;
+    roomId?: string;
     ssrc?: number;
     audio_ssrc?: number;
-    videoSsrc?: number;
     video_ssrc?: number;
-}
-
-export interface QualityPreference {
-    ssrc: number;
-    tier: number;
-    maxWidth: number;
-    maxHeight: number;
-}
-
-export interface QualityReport {
-    userId: string;
-    ssrc: number;
-    quality: number; // ConnectionQuality value
-    rttMs: number;
-    packetLoss: number;
-    jitterMs: number;
+    videoSsrc?: number;
+    screen_ssrc?: number;
+    screenSsrc?: number;
 }

@@ -68,8 +68,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled }) => {
                 onDrop={handleDrop}
                 className={`p-2 rounded transition ${
                     dragActive
-                        ? 'bg-primary-600 text-white'
-                        : 'hover:bg-dark-700 text-dark-400 hover:text-white'
+                        ? 'bg-primary-600 text-gray-900 dark:text-white'
+                        : 'hover:bg-dark-700 text-gray-500 dark:text-dark-400 hover:text-white'
                 } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 title="Upload file (or paste/drag & drop)"
             >

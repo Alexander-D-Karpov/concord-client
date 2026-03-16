@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import Avatar from './Avatar';
 import AvatarCropModal from './AvatarCropModal';
-import { useAuthStore } from '../hooks/useAuthStore';
+import useAuthStore from '../hooks/useAuthStore';
 import { useUsersStore } from '../hooks/useUsersStore';
 
 const AvatarUpload: React.FC = () => {
@@ -66,7 +66,7 @@ const AvatarUpload: React.FC = () => {
                 <button
                     onClick={() => fileRef.current?.click()}
                     disabled={uploading}
-                    className="absolute bottom-0 right-0 w-8 h-8 bg-primary-600 hover:bg-primary-700 rounded-full flex items-center justify-center text-white shadow-lg transition"
+                    className="absolute bottom-0 right-0 w-8 h-8 bg-primary-600 hover:bg-primary-700 rounded-full flex items-center justify-center text-gray-900 dark:text-white shadow-lg transition"
                 >
                     {uploading ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

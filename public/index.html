@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta
             http-equiv="Content-Security-Policy"
-            content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; img-src 'self' data: blob: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' http: https: ws: wss:"
+            content="default-src 'self' 'unsafe-inline' blob:; script-src 'self' 'unsafe-inline' blob:; worker-src 'self' blob:; img-src 'self' data: blob: http: https:; media-src 'self' data: blob: http: https: mediastream:; connect-src 'self' http: https: ws: wss:; style-src 'self' 'unsafe-inline';"
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Concord</title>
 </head>
 <body>

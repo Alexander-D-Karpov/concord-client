@@ -19,6 +19,7 @@ const PROTO_DIRS = [
     'admin/v1',
     'common/v1',
     'registry/v1',
+    'unfurl/v1',
 ];
 
 const GOOGLE_PROTOS = {

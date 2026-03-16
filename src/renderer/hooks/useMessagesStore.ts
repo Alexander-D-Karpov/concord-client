@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Message, MessageReaction } from '../types';
+import type { Message, MessageReaction } from '../utils/types';
 
 interface MessagesState {
     messages: Record<string, Message[]>;
@@ -28,17 +28,14 @@ export const useMessagesStore = create<MessagesState>((set) => ({
         }),
 
     updateMessage: (roomId, messageId, content) =>
-        set((state) => {
-            const list = state.messages[roomId] || [];
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: list.map((m) =>
-                        m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m
-                    ),
-                },
-            };
-        }),
+        set((state) => ({
+            messages: {
+                ...state.messages,
+                [roomId]: (state.messages[roomId] || []).map((m) =>
+                    m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m
+                ),
+            },
+        })),
 
     deleteMessage: (roomId, messageId) =>
         set((state) => {
@@ -46,75 +43,54 @@ export const useMessagesStore = create<MessagesState>((set) => ({
             if (messageId.startsWith('temp-')) {
                 return { messages: { ...state.messages, [roomId]: list.filter((m) => m.id !== messageId) } };
             }
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: list.map((m) => (m.id === messageId ? { ...m, deleted: true } : m)),
-                },
-            };
+            return { messages: { ...state.messages, [roomId]: list.map((m) => (m.id === messageId ? { ...m, deleted: true } : m)) } };
         }),
 
     setMessages: (roomId, messages) =>
         set((state) => ({ messages: { ...state.messages, [roomId]: messages } })),
 
     addReaction: (roomId, messageId, reaction) =>
-        set((state) => {
-            const list = state.messages[roomId] || [];
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: list.map((m) => {
-                        if (m.id !== messageId) return m;
-                        const reactions = m.reactions || [];
-                        const exists = reactions.find(
-                            (r) => r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji)
-                        );
-                        return {
-                            ...m,
-                            reactions: exists
-                                ? reactions.map((r) =>
-                                    r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji)
-                                        ? { ...r, ...reaction }
-                                        : r
-                                )
-                                : [...reactions, reaction],
-                        };
-                    }),
-                },
-            };
-        }),
+        set((state) => ({
+            messages: {
+                ...state.messages,
+                [roomId]: (state.messages[roomId] || []).map((m) => {
+                    if (m.id !== messageId) return m;
+                    const reactions = m.reactions || [];
+                    const exists = reactions.find((r) => r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji));
+                    return {
+                        ...m,
+                        reactions: exists
+                            ? reactions.map((r) => (r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji)) ? { ...r, ...reaction } : r)
+                            : [...reactions, reaction],
+                    };
+                }),
+            },
+        })),
 
     removeReaction: (roomId, messageId, criteria) =>
-        set((state) => {
-            const list = state.messages[roomId] || [];
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: list.map((m) => {
-                        if (m.id !== messageId) return m;
-                        return {
-                            ...m,
-                            reactions: (m.reactions || []).filter((r) => {
-                                if (criteria.id) return r.id !== criteria.id;
-                                if (criteria.userId && criteria.emoji)
-                                    return !(r.userId === criteria.userId && r.emoji === criteria.emoji);
-                                if (criteria.userId) return r.userId !== criteria.userId;
-                                return true;
-                            }),
-                        };
-                    }),
-                },
-            };
-        }),
+        set((state) => ({
+            messages: {
+                ...state.messages,
+                [roomId]: (state.messages[roomId] || []).map((m) => {
+                    if (m.id !== messageId) return m;
+                    return {
+                        ...m,
+                        reactions: (m.reactions || []).filter((r) => {
+                            if (criteria.id) return r.id !== criteria.id;
+                            if (criteria.userId && criteria.emoji) return !(r.userId === criteria.userId && r.emoji === criteria.emoji);
+                            if (criteria.userId) return r.userId !== criteria.userId;
+                            return true;
+                        }),
+                    };
+                }),
+            },
+        })),
 
     setPinned: (roomId, messageId, pinned) =>
-        set((state) => {
-            const list = state.messages[roomId] || [];
-            return {
-                messages: {
-                    ...state.messages,
-                    [roomId]: list.map((m) => (m.id === messageId ? { ...m, pinned } : m)),
-                },
-            };
-        }),
+        set((state) => ({
+            messages: {
+                ...state.messages,
+                [roomId]: (state.messages[roomId] || []).map((m) => (m.id === messageId ? { ...m, pinned } : m)),
+            },
+        })),
 }));

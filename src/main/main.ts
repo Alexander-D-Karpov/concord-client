@@ -250,6 +250,10 @@ function setupVoiceClientListeners() {
         mainWindow?.webContents.send("voice:participant-left", data);
     });
 
+    voiceClient.on('participant-updated', (data) => {
+        mainWindow?.webContents.send('voice:participant-updated', data);
+    });
+
     voiceClient.on('media-state', (data) => {
         mainWindow?.webContents.send('voice:media-state', data);
     });
@@ -420,7 +424,8 @@ function setupIPC() {
     handleIpc('rooms:create', async (_e, { name, region, description, isPrivate }) =>
         assertClient().createRoom(name, region, description, isPrivate));
     handleIpc('rooms:update', async (_e, { roomId, name, description, isPrivate }) =>
-        assertClient().updateRoom(roomId, name, description, isPrivate));
+        assertClient().updateRoom(roomId, name, description, isPrivate)
+    );
     handleIpc('rooms:delete', async (_e, { roomId }) => assertClient().deleteRoom(roomId));
     handleIpc('rooms:getMembers', async (_e, { roomId }) => assertClient().getMembers(roomId));
     handleIpc('rooms:attachVoiceServer', async (_e, { roomId, voiceServerId }) =>
@@ -454,18 +459,24 @@ function setupIPC() {
         }
         return assertClient().sendMessage(roomId, content, replyToId, mentions, processedAttachments);
     });
-    handleIpc('chat:edit', async (_e, { messageId, content }) => assertClient().editMessage(messageId, content));
-    handleIpc('chat:delete', async (_e, { messageId }) => assertClient().deleteMessage(messageId));
+    handleIpc('chat:edit', async (_e, { roomId, messageId, content }) =>
+        assertClient().editMessage(roomId, messageId, content)
+    );
+    handleIpc('chat:delete', async (_e, { roomId, messageId }) =>
+        assertClient().deleteMessage(roomId, messageId)
+    );
     handleIpc('chat:pin', async (_e, { roomId, messageId }) => assertClient().pinMessage(roomId, messageId));
     handleIpc('chat:unpin', async (_e, { roomId, messageId }) => assertClient().unpinMessage(roomId, messageId));
     handleIpc('chat:listPinned', async (_e, { roomId }) => assertClient().listPinnedMessages(roomId));
-    handleIpc('chat:addReaction', async (_e, { messageId, emoji }) => assertClient().addReaction(messageId, emoji));
-    handleIpc('chat:removeReaction', async (_e, { messageId, emoji }) =>
-        assertClient().removeReaction(messageId, emoji));
+    handleIpc('chat:addReaction', async (_e, { roomId, messageId, emoji }) =>
+        assertClient().addReaction(roomId, messageId, emoji));
+    handleIpc('chat:removeReaction', async (_e, { roomId, messageId, emoji }) =>
+        assertClient().removeReaction(roomId, messageId, emoji));
     handleIpc('chat:search', async (_e, { roomId, query, limit }) =>
         assertClient().searchMessages(roomId, query, limit));
-    handleIpc('chat:getThread', async (_e, { messageId, limit, cursor }) =>
-        assertClient().getThread(messageId, limit, cursor));
+    handleIpc('chat:getThread', async (_e, { roomId, messageId, limit, cursor }) =>
+        assertClient().getThread(roomId, messageId, limit, cursor)
+    );
     handleIpc('chat:startTyping', async (_e, { roomId }) => assertClient().startTyping(roomId));
     handleIpc('chat:stopTyping', async (_e, { roomId }) => assertClient().stopTyping(roomId));
 
@@ -498,6 +509,15 @@ function setupIPC() {
 
     handleIpc('dm:startTyping', async (_e, { channelId }) => assertClient().startDMTyping(channelId));
     handleIpc('dm:stopTyping', async (_e, { channelId }) => assertClient().stopDMTyping(channelId));
+    handleIpc('dm:getChannel', async (_e, { channelId }) =>
+        assertClient().getDMChannel(channelId)
+    );
+    handleIpc('dm:editMessage', async (_e, { channelId, messageId, content }) =>
+        assertClient().editDMMessage(channelId, messageId, content)
+    );
+    handleIpc('dm:deleteMessage', async (_e, { channelId, messageId }) =>
+        assertClient().deleteDMMessage(channelId, messageId)
+    );
 
     // Voice
     handleIpc("voice:join", async (_e, { roomId, audioOnly, isDM }) => {
@@ -507,7 +527,7 @@ function setupIPC() {
         }
         if (!currentUserId) throw new Error("User ID not available");
 
-        const joinKey = `${roomId}:${audioOnly ? 1 : 0}`;
+        const joinKey = `${isDM ? 'dm' : 'room'}:${roomId}:${audioOnly ? 1 : 0}`;
 
         if (voiceClient && voiceClient.isConnected() && currentVoiceRoomId === roomId && currentVoiceAudioOnly === !!audioOnly) {
             const welcomeParticipants = voiceClient.getParticipants();
@@ -672,11 +692,7 @@ function setupIPC() {
 
     ipcMain.on(
         'voice:sendVideo',
-        (_e, payload: {
-            data: Uint8Array | ArrayBuffer | number[] | { [key: string]: number };
-            isKeyframe?: boolean;
-            source?: 'camera' | 'screen';
-        }) => {
+        (_e, payload: { data: Uint8Array | ArrayBuffer; isKeyframe?: boolean; source?: 'camera' | 'screen' }) => {
             if (!voiceClient || !voiceClient.isConnected()) return;
 
             let u8: Uint8Array;
@@ -686,14 +702,11 @@ function setupIPC() {
                 u8 = data;
             } else if (data instanceof ArrayBuffer) {
                 u8 = new Uint8Array(data);
-            } else if (Array.isArray(data)) {
-                u8 = new Uint8Array(data);
             } else {
                 return;
             }
 
             if (u8.length === 0) return;
-
             voiceClient.sendVideo(Buffer.from(u8), !!payload.isKeyframe, payload.source || 'camera');
         }
     );
@@ -763,20 +776,58 @@ function setupIPC() {
         assertClient().muteUser(roomId, userId, muted));
 
     // DM
-    handleIpc('dm:getOrCreate', async (_e, { userId }) => assertClient().getOrCreateDM(userId));
-    handleIpc('dm:list', async () => assertClient().listDMs());
-    handleIpc('dm:close', async (_e, { channelId }) => assertClient().closeDM(channelId));
-    handleIpc('dm:sendMessage', async (_e, { channelId, content, attachments }) =>
-        assertClient().sendDMMessage(channelId, content, attachments));
+    handleIpc('dm:getOrCreate', async (_e, { userId }) =>
+        assertClient().getOrCreateDM(userId)
+    );
+
+    handleIpc('dm:list', async () =>
+        assertClient().listDMs()
+    );
+
+    // No backend RPC yet; keep it as a harmless no-op so renderer does not break.
+    handleIpc('dm:close', async () => ({ success: true }));
+
+    handleIpc('dm:sendMessage', async (_e, { channelId, content, attachments }) => {
+        let processedAttachments;
+
+        if (attachments?.length) {
+            processedAttachments = attachments.map((att: any) => ({
+                filename: att.filename,
+                content_type: att.content_type,
+                data: Array.isArray(att.data)
+                    ? new Uint8Array(att.data)
+                    : new Uint8Array(Object.values(att.data || {})),
+                width: att.width,
+                height: att.height,
+            }));
+        }
+
+        return assertClient().sendDMMessage(channelId, content, processedAttachments);
+    });
+
     handleIpc('dm:listMessages', async (_e, { channelId, limit, beforeId }) =>
-        assertClient().listDMMessages(channelId, limit, beforeId));
+        assertClient().listDMMessages(channelId, limit, beforeId)
+    );
+
     handleIpc('dm:startCall', async (_e, { channelId, audioOnly }) =>
-        assertClient().startDMCall(channelId, audioOnly));
+        assertClient().joinDMCall(channelId, !!audioOnly)
+    );
+
     handleIpc('dm:joinCall', async (_e, { channelId, audioOnly }) =>
-        assertClient().joinDMCall(channelId, audioOnly));
-    handleIpc('dm:leaveCall', async (_e, { channelId }) => assertClient().leaveDMCall(channelId));
-    handleIpc('dm:endCall', async (_e, { channelId }) => assertClient().endDMCall(channelId));
-    handleIpc('dm:callStatus', async (_e, { channelId }) => assertClient().getDMCallStatus(channelId));
+        assertClient().joinDMCall(channelId, !!audioOnly)
+    );
+
+    handleIpc('dm:leaveCall', async (_e, { channelId }) =>
+        assertClient().leaveDMCall(channelId)
+    );
+
+    handleIpc('dm:endCall', async (_e, { channelId }) =>
+        assertClient().leaveDMCall(channelId)
+    );
+
+    handleIpc('dm:callStatus', async (_e, { channelId }) =>
+        assertClient().getDMCallStatus(channelId)
+    );
 
     console.log('\x1b[33m[IPC] All handlers registered\x1b[0m');
 }

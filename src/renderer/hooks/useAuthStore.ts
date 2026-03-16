@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import {useSettingsStore} from "@/hooks/useSettingsStore";
+import { useSettingsStore } from './useSettingsStore';
+
+export type PresenceStatus = 'online' | 'away' | 'idle' | 'dnd' | 'offline';
 
 interface User {
     id: string;
@@ -8,6 +10,8 @@ interface User {
     displayName?: string;
     avatarUrl?: string;
     avatarThumbnailUrl?: string;
+    status?: PresenceStatus;
+    statusPreference?: PresenceStatus;
 }
 
 interface AuthTokens {
@@ -23,8 +27,13 @@ interface AuthState {
     isRefreshing: boolean;
     isInitializing: boolean;
     refreshTimeout: NodeJS.Timeout | null;
+    manualStatus: PresenceStatus;
+    isAutoAway: boolean;
+
     setTokens: (accessToken: string, refreshToken: string, expiresIn: number) => Promise<void>;
     setUser: (user: Partial<User> & { id: string }) => void;
+    setUserStatus: (status: PresenceStatus, options?: { auto?: boolean }) => void;
+    restoreManualStatus: () => void;
     clearTokens: () => void;
     logout: () => void;
     startTokenRefresh: () => void;
@@ -32,9 +41,38 @@ interface AuthState {
     refreshToken: () => Promise<void>;
 }
 
+const normalizeStatus = (status?: string): PresenceStatus => {
+    const normalized = (status || '').toLowerCase();
+
+    if (normalized === 'busy') return 'dnd';
+    if (normalized === 'invisible') return 'offline';
+    if (
+        normalized === 'online' ||
+        normalized === 'away' ||
+        normalized === 'idle' ||
+        normalized === 'dnd' ||
+        normalized === 'offline'
+    ) {
+        return normalized;
+    }
+
+    return 'online';
+};
+
+const normalizeStatusPreference = (status?: string): PresenceStatus => {
+    const normalized = (status || '').toLowerCase();
+
+    if (normalized === 'busy') return 'dnd';
+    if (normalized === 'invisible') return 'offline';
+    if (normalized === 'dnd') return 'dnd';
+    if (normalized === 'offline') return 'offline';
+
+    return 'online';
+};
+
 let initializationPromise: Promise<void> | null = null;
 
-export const useAuthStore = create<AuthState>()(
+const useAuthStore = create<AuthState>()(
     persist(
         (set, get) => ({
             tokens: null,
@@ -43,21 +81,18 @@ export const useAuthStore = create<AuthState>()(
             isRefreshing: false,
             isInitializing: false,
             refreshTimeout: null,
+            manualStatus: 'online',
+            isAutoAway: false,
 
-            setTokens: async (accessToken: string, refreshToken: string, expiresIn: number) => {
+            setTokens: async (accessToken, refreshToken, expiresIn) => {
                 const state = get();
-                if (state.isRefreshing || state.isInitializing) {
-                    console.log('[AuthStore] Token operation already in progress, skipping...');
-                    return;
-                }
+                if (state.isRefreshing || state.isInitializing) return;
                 if (initializationPromise) {
-                    console.log('[AuthStore] Waiting for existing initialization...');
                     await initializationPromise;
                     return;
                 }
 
                 const expiresAt = Date.now() + expiresIn * 1000;
-
                 set({ isInitializing: true });
 
                 initializationPromise = (async () => {
@@ -67,15 +102,15 @@ export const useAuthStore = create<AuthState>()(
                             isAuthenticated: true,
                         });
 
-                        console.log('[AuthStore] Initializing client with tokens');
                         const { settings } = useSettingsStore.getState();
-                        await window.concord.initializeClient(accessToken, settings.serverAddress, refreshToken, expiresIn);
-                        console.log('[AuthStore] Client initialized successfully');
+                        await window.concord.initializeClient(
+                            accessToken,
+                            settings.serverAddress,
+                            refreshToken,
+                            expiresIn
+                        );
 
                         get().startTokenRefresh();
-                    } catch (err) {
-                        console.error('[AuthStore] Failed to initialize client:', err);
-                        throw err;
                     } finally {
                         set({ isInitializing: false });
                         initializationPromise = null;
@@ -85,14 +120,77 @@ export const useAuthStore = create<AuthState>()(
                 await initializationPromise;
             },
 
-            setUser: (userData) => set((state) => ({
-                user: {
-                    ...state.user,
-                    ...Object.fromEntries(
-                        Object.entries(userData).filter(([_, v]) => v !== undefined && v !== '')
-                    ),
-                } as User,
-            })),
+            setUser: (userData) =>
+                set((state) => {
+                    const filtered = Object.fromEntries(
+                        Object.entries(userData).filter(([_, value]) => value !== undefined && value !== '')
+                    ) as Partial<User> & { id: string };
+
+                    const incomingStatus = filtered.status
+                        ? normalizeStatus(filtered.status as string)
+                        : undefined;
+
+                    const incomingStatusPreference = filtered.statusPreference
+                        ? normalizeStatusPreference(filtered.statusPreference as string)
+                        : undefined;
+
+                    const nextUser = {
+                        ...state.user,
+                        ...filtered,
+                        ...(incomingStatus ? { status: incomingStatus } : {}),
+                        ...(incomingStatusPreference ? { statusPreference: incomingStatusPreference } : {}),
+                    } as User;
+
+                    let manualStatus = state.manualStatus;
+                    let isAutoAway = state.isAutoAway;
+
+                    if (incomingStatusPreference) {
+                        manualStatus = incomingStatusPreference;
+                    }
+
+                    if (incomingStatus === 'away') {
+                        isAutoAway = true;
+                    } else if (incomingStatus) {
+                        isAutoAway = false;
+                    }
+
+                    return {
+                        user: nextUser,
+                        manualStatus,
+                        isAutoAway,
+                    };
+                }),
+
+            setUserStatus: (status, options) =>
+                set((state) => {
+                    const nextStatus = normalizeStatus(status);
+
+                    return {
+                        user: state.user
+                            ? {
+                                ...state.user,
+                                status: nextStatus,
+                                statusPreference: options?.auto
+                                    ? state.user.statusPreference ?? state.manualStatus
+                                    : nextStatus,
+                            }
+                            : state.user,
+                        manualStatus: options?.auto ? state.manualStatus : nextStatus,
+                        isAutoAway: !!options?.auto && nextStatus === 'away',
+                    };
+                }),
+
+            restoreManualStatus: () =>
+                set((state) => ({
+                    user: state.user
+                        ? {
+                            ...state.user,
+                            status: state.manualStatus,
+                            statusPreference: state.manualStatus,
+                        }
+                        : state.user,
+                    isAutoAway: false,
+                })),
 
             clearTokens: () => {
                 get().stopTokenRefresh();
@@ -102,6 +200,8 @@ export const useAuthStore = create<AuthState>()(
                     isAuthenticated: false,
                     isRefreshing: false,
                     isInitializing: false,
+                    manualStatus: 'online',
+                    isAutoAway: false,
                 });
             },
 
@@ -113,38 +213,29 @@ export const useAuthStore = create<AuthState>()(
                     isAuthenticated: false,
                     isRefreshing: false,
                     isInitializing: false,
+                    manualStatus: 'online',
+                    isAutoAway: false,
                 });
             },
 
             startTokenRefresh: () => {
                 const state = get();
-                const { tokens } = state;
-
-                if (!tokens) return;
+                if (!state.tokens) return;
 
                 state.stopTokenRefresh();
 
-                const timeUntilExpiry = tokens.expiresAt - Date.now();
-
+                const timeUntilExpiry = state.tokens.expiresAt - Date.now();
                 if (timeUntilExpiry <= 60000) {
-                    console.log('[AuthStore] Token expired or about to expire, refreshing immediately');
-                    state.refreshToken().catch(err => {
-                        console.error('[AuthStore] Immediate token refresh failed:', err);
-                        state.logout();
-                    });
+                    state.refreshToken().catch(() => state.logout());
                     return;
                 }
 
                 const refreshTime = Math.max(timeUntilExpiry - 60000, 10000);
-
-                console.log(`[AuthStore] Token refresh scheduled in ${Math.round(refreshTime / 1000)}s`);
-
                 const timeout = setTimeout(async () => {
                     try {
-                        await state.refreshToken();
-                    } catch (err) {
-                        console.error('[AuthStore] Token refresh failed:', err);
-                        state.logout();
+                        await get().refreshToken();
+                    } catch {
+                        get().logout();
                     }
                 }, refreshTime);
 
@@ -160,35 +251,23 @@ export const useAuthStore = create<AuthState>()(
             },
 
             refreshToken: async () => {
-                const state = get();
-                const { tokens, isRefreshing } = state;
+                const { tokens, isRefreshing } = get();
+                if (isRefreshing || !tokens?.refreshToken) return;
 
-                if (isRefreshing) {
-                    console.log('[AuthStore] Token refresh already in progress');
-                    return;
-                }
-
-                if (!tokens?.refreshToken) {
-                    throw new Error('No refresh token available');
-                }
-
-                console.log('[AuthStore] Refreshing token...');
                 set({ isRefreshing: true });
 
                 try {
                     const response = await window.concord.refreshToken(tokens.refreshToken);
-
                     const expiresAt = Date.now() + response.expires_in * 1000;
 
                     set({
                         tokens: {
                             accessToken: response.access_token,
                             refreshToken: response.refresh_token,
-                            expiresAt
+                            expiresAt,
                         },
                     });
 
-                    console.log('[AuthStore] Reinitializing client with new tokens');
                     const { settings } = useSettingsStore.getState();
                     await window.concord.initializeClient(
                         response.access_token,
@@ -196,11 +275,9 @@ export const useAuthStore = create<AuthState>()(
                         response.refresh_token,
                         response.expires_in
                     );
-                    console.log('[AuthStore] Token refreshed successfully');
 
                     get().startTokenRefresh();
                 } catch (err) {
-                    console.error('[AuthStore] Failed to refresh token:', err);
                     get().logout();
                     throw err;
                 } finally {
@@ -210,18 +287,27 @@ export const useAuthStore = create<AuthState>()(
         }),
         {
             name: 'auth-storage',
-            partialize: (state) => ({
-                tokens: state.tokens,
-                user: state.user,
-                isAuthenticated: state.isAuthenticated,
-            }),
+            partialize: (state) => {
+                const persistedUser = state.user
+                    ? (({ status, ...rest }) => rest)(state.user)
+                    : null;
+
+                return {
+                    tokens: state.tokens,
+                    user: persistedUser,
+                    isAuthenticated: state.isAuthenticated,
+                    manualStatus: state.manualStatus === 'offline' ? 'online' : state.manualStatus,
+                };
+            },
             onRehydrateStorage: () => async (state) => {
                 if (state?.tokens?.accessToken && !state.isInitializing) {
-                    console.log('[AuthStore] Rehydrating auth state');
                     try {
                         const { settings } = useSettingsStore.getState();
                         const expiresIn = state.tokens.expiresAt
-                            ? Math.max(Math.floor((state.tokens.expiresAt - Date.now()) / 1000), 0)
+                            ? Math.max(
+                                Math.floor((state.tokens.expiresAt - Date.now()) / 1000),
+                                0
+                            )
                             : undefined;
 
                         await window.concord.initializeClient(
@@ -230,13 +316,12 @@ export const useAuthStore = create<AuthState>()(
                             state.tokens.refreshToken,
                             expiresIn
                         );
-                        console.log('[AuthStore] Client initialized on rehydration');
+
                         state.startTokenRefresh?.();
-                    } catch (err) {
-                        console.error('[AuthStore] Failed to initialize client on rehydration:', err);
-                    }
+                    } catch {}
                 }
             },
         }
     )
 );
+export default useAuthStore

@@ -9,6 +9,7 @@ export interface User {
     createdAt?: string;
     status?: UserStatus;
     bio?: string;
+    statusPreference?: string;
 }
 
 export interface AvatarEntry {
@@ -76,6 +77,21 @@ export interface Message {
     pinned?: boolean;
 }
 
+export interface DMMessage {
+    id: string;
+    channelId: string;
+    authorId: string;
+    content: string;
+    createdAt: string;
+    editedAt?: string;
+    deleted: boolean;
+    replyToId?: string;
+    attachments: MessageAttachment[];
+    mentions?: string[];
+    reactions?: MessageReaction[];
+    pinned?: boolean;
+}
+
 export interface RoomInvite {
     id: string;
     roomId: string;
@@ -84,14 +100,6 @@ export interface RoomInvite {
     inviterDisplayName: string;
     inviterAvatarUrl?: string;
     createdAt: string;
-}
-
-export interface VoiceState {
-    userId: string;
-    roomId: string;
-    muted: boolean;
-    videoEnabled: boolean;
-    speaking: boolean;
 }
 
 export interface AuthTokens {
@@ -126,14 +134,23 @@ export interface Friend {
     friendsSince: string;
 }
 
-export interface VoiceParticipant {
-    userId: string;
-    audioSsrc: number;
+export interface LoginResponse {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+}
+
+export interface MarkAsReadResponse {
+    last_read_message_id: string;
+    unread_count: number;
+}
+
+export interface VoiceJoinResponse {
+    success: boolean;
+    ssrc: number;
     videoSsrc: number;
-    muted: boolean;
-    videoEnabled: boolean;
-    speaking: boolean;
-    joinedAt: string;
-    displayName?: string;
-    avatarUrl?: string;
+    screenSsrc: number;
+    sessionId: number;
+    participants: any[];
+    participantCount: number;
 }

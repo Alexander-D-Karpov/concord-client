@@ -1,133 +1,141 @@
 import { create } from 'zustand';
-import { User } from '../types';
+import { mapUserFromApi } from '../utils/mappers';
+import type { User } from '../utils/types';
 
 interface UsersState {
     users: Map<string, User>;
     loading: Set<string>;
     failed: Set<string>;
+    pendingBatch: Set<string>;
+    batchTimer: ReturnType<typeof setTimeout> | null;
     getUser: (userId: string) => User | null;
     fetchUser: (userId: string) => Promise<void>;
     fetchUsers: (userIds: string[]) => Promise<void>;
     setUser: (user: Partial<User> & { id: string }) => void;
 }
 
-const mapUserFromApi = (info: any): User => ({
-    id: info.id,
-    handle: info.handle,
-    displayName: info.display_name || info.handle,
-    avatarUrl: info.avatar_url || undefined,
-    avatarThumbnailUrl: info.avatar_thumbnail_url || undefined,
-    createdAt: info.created_at,
-    status: info.status,
-    bio: info.bio,
-});
+const BATCH_DELAY = 50;
+
+const mergeUser = (existing: User | undefined, incoming: Partial<User> & { id: string }): User => {
+    const merged = { ...(existing || {}) } as User;
+
+    for (const [key, value] of Object.entries(incoming)) {
+        if (value !== undefined && value !== null && value !== '') {
+            (merged as any)[key] = value;
+        }
+    }
+
+    return merged;
+};
 
 export const useUsersStore = create<UsersState>((set, get) => ({
     users: new Map(),
     loading: new Set(),
     failed: new Set(),
+    pendingBatch: new Set(),
+    batchTimer: null,
 
-    getUser: (userId: string) => get().users.get(userId) || null,
+    getUser: (userId) => get().users.get(userId) || null,
 
-    fetchUser: async (userId: string) => {
+    fetchUser: async (userId) => {
         const state = get();
-        if (state.users.has(userId) || state.loading.has(userId) || state.failed.has(userId)) return;
+        if (
+            state.users.has(userId) ||
+            state.loading.has(userId) ||
+            state.failed.has(userId) ||
+            state.pendingBatch.has(userId)
+        ) {
+            return;
+        }
 
         set((s) => {
-            const newLoading = new Set(s.loading);
-            newLoading.add(userId);
-            return { loading: newLoading };
-        });
+            const pending = new Set(s.pendingBatch);
+            pending.add(userId);
 
-        try {
-            const userInfo = await window.concord.getUser(userId);
-            const user = mapUserFromApi(userInfo);
-            set((s) => {
-                const newUsers = new Map(s.users);
-                newUsers.set(userId, user);
-                const newLoading = new Set(s.loading);
-                newLoading.delete(userId);
-                const newFailed = new Set(s.failed);
-                newFailed.delete(userId);
-                return { users: newUsers, loading: newLoading, failed: newFailed };
-            });
-        } catch (err) {
-            console.error('[UsersStore] Failed to fetch user:', userId, err);
-            set((s) => {
-                const newLoading = new Set(s.loading);
-                newLoading.delete(userId);
-                const newFailed = new Set(s.failed);
-                newFailed.add(userId);
-                return { loading: newLoading, failed: newFailed };
-            });
-            setTimeout(() => {
-                set((s) => {
-                    const newFailed = new Set(s.failed);
-                    newFailed.delete(userId);
-                    return { failed: newFailed };
-                });
-            }, 10000);
-        }
+            if (s.batchTimer) {
+                clearTimeout(s.batchTimer);
+            }
+
+            const timer = setTimeout(() => {
+                const currentPending = Array.from(get().pendingBatch);
+                set({ pendingBatch: new Set(), batchTimer: null });
+
+                if (currentPending.length > 0) {
+                    void get().fetchUsers(currentPending);
+                }
+            }, BATCH_DELAY);
+
+            return { pendingBatch: pending, batchTimer: timer };
+        });
     },
 
-    fetchUsers: async (userIds: string[]) => {
+    fetchUsers: async (userIds) => {
         const state = get();
         const idsToFetch = userIds.filter(
-            (id) => !state.users.has(id) && !state.loading.has(id) && !state.failed.has(id)
+            (id) => !state.loading.has(id) && !state.failed.has(id)
         );
-        if (idsToFetch.length === 0) return;
+
+        if (idsToFetch.length === 0) {
+            return;
+        }
 
         set((s) => {
             const newLoading = new Set(s.loading);
-            idsToFetch.forEach(id => newLoading.add(id));
+            idsToFetch.forEach((id) => newLoading.add(id));
             return { loading: newLoading };
         });
 
         try {
             const res = await window.concord.listUsersByIds(idsToFetch);
-            const fetchedUsers = (res?.users || []).map(mapUserFromApi);
+            const fetched = (res?.users || []).map(mapUserFromApi);
 
             set((s) => {
                 const newUsers = new Map(s.users);
-                fetchedUsers.forEach((u: User) => newUsers.set(u.id, u));
                 const newLoading = new Set(s.loading);
-                idsToFetch.forEach(id => newLoading.delete(id));
-                return { users: newUsers, loading: newLoading };
+
+                for (const rawUser of fetched) {
+                    const existing = newUsers.get(rawUser.id);
+                    newUsers.set(rawUser.id, mergeUser(existing, rawUser));
+                }
+
+                idsToFetch.forEach((id) => newLoading.delete(id));
+
+                return {
+                    users: newUsers,
+                    loading: newLoading,
+                };
             });
-        } catch (err) {
-            console.error('[UsersStore] Failed to batch fetch users:', err);
+        } catch {
             set((s) => {
                 const newLoading = new Set(s.loading);
-                idsToFetch.forEach(id => newLoading.delete(id));
                 const newFailed = new Set(s.failed);
-                idsToFetch.forEach(id => newFailed.add(id));
-                return { loading: newLoading, failed: newFailed };
+
+                idsToFetch.forEach((id) => {
+                    newLoading.delete(id);
+                    newFailed.add(id);
+                });
+
+                return {
+                    loading: newLoading,
+                    failed: newFailed,
+                };
             });
+
             setTimeout(() => {
                 set((s) => {
                     const newFailed = new Set(s.failed);
-                    idsToFetch.forEach(id => newFailed.delete(id));
+                    idsToFetch.forEach((id) => newFailed.delete(id));
                     return { failed: newFailed };
                 });
             }, 10000);
         }
     },
 
-    setUser: (user: Partial<User> & { id: string }) => {
+    setUser: (user) => {
         set((s) => {
             const newUsers = new Map(s.users);
             const existing = newUsers.get(user.id);
-            if (existing) {
-                const merged = { ...existing };
-                for (const [key, value] of Object.entries(user)) {
-                    if (value !== undefined && value !== '') {
-                        (merged as any)[key] = value;
-                    }
-                }
-                newUsers.set(user.id, merged);
-            } else {
-                newUsers.set(user.id, user as User);
-            }
+            newUsers.set(user.id, mergeUser(existing, user));
             return { users: newUsers };
         });
     },

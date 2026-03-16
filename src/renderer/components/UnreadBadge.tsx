@@ -11,7 +11,7 @@ const UnreadBadge: React.FC<UnreadBadgeProps> = ({ count, className = '' }) => {
     const display = count > 99 ? '99+' : count.toString();
 
     return (
-        <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-xs font-bold text-white bg-red-500 rounded-full ${className}`}>
+        <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-xs font-bold text-gray-900 dark:text-white bg-red-500 rounded-full ${className}`}>
             {display}
         </span>
     );

@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useNotificationStore } from './useNotificationStore';
-import { useAuthStore } from './useAuthStore';
+import useAuthStore from './useAuthStore';
 import { useRoomsStore } from './useRoomsStore';
 import { useDMStore } from './useDMStore';
 

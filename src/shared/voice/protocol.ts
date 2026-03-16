@@ -1,8 +1,5 @@
 import { MEDIA_HEADER_SIZE, FRAG_HEADER_SIZE, PacketType } from './constants';
 import type { MediaHeader, FragmentHeader } from './types';
-import { ConnectionQuality } from './constants';
-
-const PacketTypeQualityReport = 0x10;
 
 export function encodeMediaHeader(header: MediaHeader): Uint8Array {
     const buf = new Uint8Array(MEDIA_HEADER_SIZE);
@@ -25,7 +22,6 @@ export function decodeMediaHeader(data: Uint8Array): MediaHeader | null {
     if (data.length < MEDIA_HEADER_SIZE) return null;
 
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-
     return {
         type: data[0],
         flags: data[1],
@@ -41,26 +37,31 @@ export function decodeMediaHeader(data: Uint8Array): MediaHeader | null {
 export function encodeFragmentHeader(header: FragmentHeader): Uint8Array {
     const buf = new Uint8Array(FRAG_HEADER_SIZE);
     const view = new DataView(buf.buffer);
-
     view.setUint32(0, header.frameId, false);
     view.setUint16(4, header.fragIndex, false);
     view.setUint16(6, header.fragCount, false);
     view.setUint32(8, header.frameLength, false);
-
     return buf;
 }
 
 export function decodeFragmentHeader(data: Uint8Array): FragmentHeader | null {
     if (data.length < FRAG_HEADER_SIZE) return null;
-
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-
     return {
         frameId: view.getUint32(0, false),
         fragIndex: view.getUint16(4, false),
         fragCount: view.getUint16(6, false),
         frameLength: view.getUint32(8, false),
     };
+}
+
+function buildJsonPacket(type: number, payload: unknown): Uint8Array {
+    const json = JSON.stringify(payload);
+    const jsonBytes = new TextEncoder().encode(json);
+    const packet = new Uint8Array(1 + jsonBytes.length);
+    packet[0] = type;
+    packet.set(jsonBytes, 1);
+    return packet;
 }
 
 export function buildHelloPacket(payload: {
@@ -73,15 +74,12 @@ export function buildHelloPacket(payload: {
     video_codec?: string;
     crypto?: {
         aead: string;
-        key_id: number[];
+        key_id?: number[];
+        key_material?: number[];
+        nonce_base?: number[];
     };
 }): Uint8Array {
-    const json = JSON.stringify(payload);
-    const jsonBytes = new TextEncoder().encode(json);
-    const packet = new Uint8Array(1 + jsonBytes.length);
-    packet[0] = PacketType.HELLO;
-    packet.set(jsonBytes, 1);
-    return packet;
+    return buildJsonPacket(PacketType.HELLO, payload);
 }
 
 export function buildPingPacket(): Uint8Array {
@@ -96,7 +94,7 @@ export function buildByePacket(ssrc: number): Uint8Array {
     const packet = new Uint8Array(5);
     const view = new DataView(packet.buffer);
     packet[0] = PacketType.BYE;
-    view.setUint32(1, ssrc, false);
+    view.setUint32(1, ssrc >>> 0, false);
     return packet;
 }
 
@@ -108,12 +106,7 @@ export function buildSpeakingPacket(payload: {
     room_id: string;
     speaking: boolean;
 }): Uint8Array {
-    const json = JSON.stringify(payload);
-    const jsonBytes = new TextEncoder().encode(json);
-    const packet = new Uint8Array(1 + jsonBytes.length);
-    packet[0] = PacketType.SPEAKING;
-    packet.set(jsonBytes, 1);
-    return packet;
+    return buildJsonPacket(PacketType.SPEAKING, payload);
 }
 
 export function buildMediaStatePacket(payload: {
@@ -126,26 +119,18 @@ export function buildMediaStatePacket(payload: {
     video_enabled: boolean;
     screen_sharing: boolean;
 }): Uint8Array {
-    const json = JSON.stringify(payload);
-    const jsonBytes = new TextEncoder().encode(json);
-    const packet = new Uint8Array(1 + jsonBytes.length);
-    packet[0] = PacketType.MEDIA_STATE;
-    packet.set(jsonBytes, 1);
-    return packet;
+    return buildJsonPacket(PacketType.MEDIA_STATE, payload);
 }
 
 export function buildNackPacket(ssrc: number, sequences: number[]): Uint8Array {
     const packet = new Uint8Array(7 + sequences.length * 2);
     const view = new DataView(packet.buffer);
-
     packet[0] = PacketType.NACK;
-    view.setUint32(1, ssrc, false);
+    view.setUint32(1, ssrc >>> 0, false);
     view.setUint16(5, sequences.length, false);
-
     for (let i = 0; i < sequences.length; i++) {
-        view.setUint16(7 + i * 2, sequences[i], false);
+        view.setUint16(7 + i * 2, sequences[i] & 0xffff, false);
     }
-
     return packet;
 }
 
@@ -153,7 +138,7 @@ export function buildPliPacket(ssrc: number): Uint8Array {
     const packet = new Uint8Array(5);
     const view = new DataView(packet.buffer);
     packet[0] = PacketType.PLI;
-    view.setUint32(1, ssrc, false);
+    view.setUint32(1, ssrc >>> 0, false);
     return packet;
 }
 
@@ -169,29 +154,23 @@ export function buildReceiverReport(
     const view = new DataView(packet.buffer);
 
     packet[0] = PacketType.RR;
-    view.setUint32(1, targetSsrc, false);
-    view.setUint32(5, reporterSsrc, false);
-    packet[9] = Math.min(255, Math.floor(fractionLost * 255));
+    view.setUint32(1, targetSsrc >>> 0, false);
+    view.setUint32(5, reporterSsrc >>> 0, false);
+    packet[9] = Math.min(255, Math.max(0, Math.floor(fractionLost * 255)));
 
     const lostBytes = totalLost & 0xffffff;
     packet[10] = (lostBytes >> 16) & 0xff;
     packet[11] = (lostBytes >> 8) & 0xff;
     packet[12] = lostBytes & 0xff;
 
-    view.setUint32(13, highestSeq, false);
-    view.setUint32(17, jitter, false);
+    view.setUint32(13, highestSeq >>> 0, false);
+    view.setUint32(17, jitter >>> 0, false);
     view.setUint32(21, 0, false);
-
     return packet;
 }
 
 export function buildSubscribePacket(ssrcs: number[]): Uint8Array {
-    const payload = JSON.stringify({ subscriptions: ssrcs });
-    const jsonBytes = new TextEncoder().encode(payload);
-    const packet = new Uint8Array(1 + jsonBytes.length);
-    packet[0] = PacketType.SUBSCRIBE;
-    packet.set(jsonBytes, 1);
-    return packet;
+    return buildJsonPacket(PacketType.SUBSCRIBE, { subscriptions: ssrcs.map(v => v >>> 0) });
 }
 
 export function buildQualityReportPacket(payload: {
@@ -203,10 +182,5 @@ export function buildQualityReportPacket(payload: {
     packet_loss: number;
     jitter_ms: number;
 }): Uint8Array {
-    const json = JSON.stringify(payload);
-    const jsonBytes = new TextEncoder().encode(json);
-    const packet = new Uint8Array(1 + jsonBytes.length);
-    packet[0] = PacketTypeQualityReport;
-    packet.set(jsonBytes, 1);
-    return packet;
+    return buildJsonPacket(PacketType.PACKET_TYPE_QUALITY_REPORT, payload);
 }

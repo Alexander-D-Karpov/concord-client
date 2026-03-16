@@ -43,6 +43,7 @@ interface VoiceStoreState {
     updateParticipant: (userId: string, update: Partial<VoiceStoreParticipant>) => void;
     removeParticipant: (userId: string) => void;
     setLocalSSRCs: (audio?: number, video?: number, screen?: number) => void;
+    setLocalQuality: (quality: number) => void;
     toggleSubscription: (ssrc: number) => void;
     reset: () => void;
 }
@@ -67,7 +68,6 @@ const initialState = {
 
 export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
     ...initialState,
-
     setConnected: (connected) => set({ connected }),
     setConnecting: (connecting) => set({ connecting }),
     setRoom: (roomId, isDM) => set({ roomId, isDM }),
@@ -76,9 +76,7 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
     setVideoEnabled: (videoEnabled) => set({ videoEnabled }),
     setScreenSharing: (screenSharing) => set({ screenSharing }),
     setError: (error) => set({ error }),
-
     setParticipants: (participants) => set({ participants: new Map(participants) }),
-
     updateParticipant: (userId, update) => set(state => {
         const participants = new Map(state.participants);
         const existing = participants.get(userId);
@@ -98,25 +96,17 @@ export const useVoiceStore = create<VoiceStoreState>((set, get) => ({
         }
         return { participants };
     }),
-
     removeParticipant: (userId) => set(state => {
         const participants = new Map(state.participants);
         participants.delete(userId);
         return { participants };
     }),
-
-    setLocalSSRCs: (audio, video, screen) => set({
-        localAudioSsrc: audio,
-        localVideoSsrc: video,
-        localScreenSsrc: screen,
-    }),
-
+    setLocalSSRCs: (audio, video, screen) => set({ localAudioSsrc: audio, localVideoSsrc: video, localScreenSsrc: screen }),
+    setLocalQuality: (quality) => set({ localQuality: quality }),
     toggleSubscription: (ssrc) => set(state => {
         const next = new Set(state.disabledSSRCs);
-        if (next.has(ssrc)) next.delete(ssrc);
-        else next.add(ssrc);
+        if (next.has(ssrc)) next.delete(ssrc); else next.add(ssrc);
         return { disabledSSRCs: next };
     }),
-
     reset: () => set({ ...initialState, participants: new Map(), disabledSSRCs: new Set() }),
 }));

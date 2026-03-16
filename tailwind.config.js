@@ -1,4 +1,5 @@
 module.exports = {
+    darkMode: 'class',
     content: [
         './src/renderer/**/*.{ts,tsx,js,jsx}',
         './public/index.html',

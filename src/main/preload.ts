@@ -8,7 +8,6 @@ contextBridge.exposeInMainWorld('concord', {
         invoke('client:initialize', { accessToken, serverAddress, refreshToken, expiresIn }),
     getGPUInfo: () => invoke('app:getGPUInfo'),
 
-    // Auth
     register: (handle: string, password: string, displayName: string, serverAddress?: string) =>
         invoke('auth:register', { handle, password, displayName, serverAddress }),
     login: (handle: string, password: string, serverAddress?: string) =>
@@ -21,7 +20,6 @@ contextBridge.exposeInMainWorld('concord', {
     logout: (refreshToken: string) => invoke('auth:logout', { refreshToken }),
     checkAuthStatus: () => invoke('auth:checkStatus'),
 
-    // Users
     getSelf: () => invoke('users:getSelf'),
     getUser: (userId: string) => invoke('users:getUser', { userId }),
     getUserByHandle: (handle: string) => invoke('users:getByHandle', { handle }),
@@ -35,7 +33,6 @@ contextBridge.exposeInMainWorld('concord', {
     deleteAvatar: (avatarId: string) => invoke('users:deleteAvatar', { avatarId }),
     getAvatarHistory: (userId: string) => invoke('users:getAvatarHistory', { userId }),
 
-    // Rooms
     getRooms: () => invoke('rooms:list'),
     getRoom: (roomId: string) => invoke('rooms:get', { roomId }),
     createRoom: (name: string, region?: string, description?: string, isPrivate?: boolean) =>
@@ -46,7 +43,6 @@ contextBridge.exposeInMainWorld('concord', {
     attachVoiceServer: (roomId: string, voiceServerId: string) =>
         invoke('rooms:attachVoiceServer', { roomId, voiceServerId }),
 
-    // Membership
     getMembers: (roomId: string) => invoke('rooms:getMembers', { roomId }),
     inviteMember: (roomId: string, userId: string) => invoke('membership:invite', { roomId, userId }),
     acceptRoomInvite: (inviteId: string) => invoke('membership:acceptInvite', { inviteId }),
@@ -59,26 +55,28 @@ contextBridge.exposeInMainWorld('concord', {
     setMemberNickname: (roomId: string, nickname: string) =>
         invoke('membership:setNickname', { roomId, nickname }),
 
-    // Chat
     getMessages: (roomId: string, limit?: number, beforeId?: string) =>
         invoke('chat:list', { roomId, limit, beforeId }),
     sendMessage: (roomId: string, content: string, replyToId?: string, mentions?: string[], attachments?: any[]) =>
         invoke('chat:send', { roomId, content, replyToId, mentions, attachments }),
-    editMessage: (messageId: string, content: string) => invoke('chat:edit', { messageId, content }),
-    deleteMessage: (messageId: string) => invoke('chat:delete', { messageId }),
+    editMessage: (roomId: string, messageId: string, content: string) =>
+        invoke('chat:edit', { roomId, messageId, content }),
+    deleteMessage: (roomId: string, messageId: string) =>
+        invoke('chat:delete', { roomId, messageId }),
     pinMessage: (roomId: string, messageId: string) => invoke('chat:pin', { roomId, messageId }),
     unpinMessage: (roomId: string, messageId: string) => invoke('chat:unpin', { roomId, messageId }),
     listPinnedMessages: (roomId: string) => invoke('chat:listPinned', { roomId }),
-    addReaction: (messageId: string, emoji: string) => invoke('chat:addReaction', { messageId, emoji }),
-    removeReaction: (messageId: string, emoji: string) => invoke('chat:removeReaction', { messageId, emoji }),
+    addReaction: (roomId: string, messageId: string, emoji: string) =>
+        invoke('chat:addReaction', { roomId, messageId, emoji }),
+    removeReaction: (roomId: string, messageId: string, emoji: string) =>
+        invoke('chat:removeReaction', { roomId, messageId, emoji }),
     searchMessages: (roomId: string, query: string, limit?: number) =>
         invoke('chat:search', { roomId, query, limit }),
-    getThread: (messageId: string, limit?: number, cursor?: string) =>
-        invoke('chat:getThread', { messageId, limit, cursor }),
+    getThread: (roomId: string, messageId: string, limit?: number, cursor?: string) =>
+        invoke('chat:getThread', { roomId, messageId, limit, cursor }),
     startTyping: (roomId: string) => invoke('chat:startTyping', { roomId }),
     stopTyping: (roomId: string) => invoke('chat:stopTyping', { roomId }),
 
-    // Stream
     startEventStream: () => invoke('stream:start'),
     streamAck: (eventId: string) => invoke('stream:ack', { eventId }),
     onStreamEvent: (cb: (event: any) => void) => {
@@ -97,7 +95,6 @@ contextBridge.exposeInMainWorld('concord', {
         return () => ipcRenderer.removeListener('stream:end', handler);
     },
 
-    // Voice
     joinVoice: (roomId: string, audioOnly?: boolean, isDM?: boolean) =>
         invoke('voice:join', { roomId, audioOnly, isDM }),
     leaveVoice: (roomId: string) => invoke('voice:leave', { roomId }),
@@ -105,16 +102,17 @@ contextBridge.exposeInMainWorld('concord', {
         invoke('voice:setMediaPrefs', { roomId, audioOnly, videoEnabled, muted, screenSharing }),
     getVoiceStatus: (roomId: string) => invoke('voice:getStatus', { roomId }),
     getVoiceParticipants: () => invoke('voice:getParticipants'),
+    onVoiceParticipantUpdated: (cb: (data: any) => void) => {
+        const handler = (_e: any, data: any) => cb(data);
+        ipcRenderer.on('voice:participant-updated', handler);
+        return () => ipcRenderer.removeListener('voice:participant-updated', handler);
+    },
     sendVoiceAudio: (data: ArrayBuffer) => {
         ipcRenderer.send('voice:sendAudio', new Uint8Array(data));
         return Promise.resolve({ success: true });
     },
     sendVoiceVideo: (data: ArrayBuffer, isKeyframe: boolean, source: 'camera' | 'screen') => {
-        ipcRenderer.send('voice:sendVideo', {
-            data: Array.from(new Uint8Array(data)),
-            isKeyframe,
-            source
-        });
+        ipcRenderer.send('voice:sendVideo', { data: new Uint8Array(data), isKeyframe, source });
         return Promise.resolve({ success: true });
     },
     updateVoiceSubscriptions: (ssrcs: number[]) => ipcRenderer.invoke('voice:subscriptions', ssrcs),
@@ -141,11 +139,8 @@ contextBridge.exposeInMainWorld('concord', {
         ipcRenderer.on('voice:media-state', handler);
         return () => ipcRenderer.removeListener('voice:media-state', handler);
     },
-
     setVoiceMediaState: (muted: boolean, videoEnabled: boolean, screenSharing: boolean) =>
         invoke('voice:setMediaState', { muted, videoEnabled, screenSharing }),
-
-    // Voice events
     onVoiceSpeaking: (cb: (data: any) => void) => {
         const handler = (_e: any, data: any) => cb(data);
         ipcRenderer.on('voice:speaking', handler);
@@ -181,11 +176,6 @@ contextBridge.exposeInMainWorld('concord', {
         ipcRenderer.on('voice:video', handler);
         return () => ipcRenderer.removeListener('voice:video', handler);
     },
-    onVoiceSyncDrift: (cb: (drift: number) => void) => {
-        const handler = (_e: any, drift: number) => cb(drift);
-        ipcRenderer.on('voice:sync-drift', handler);
-        return () => ipcRenderer.removeListener('voice:sync-drift', handler);
-    },
     onVoiceRTT: (cb: (rtt: number) => void) => {
         const handler = (_e: any, rtt: number) => cb(rtt);
         ipcRenderer.on('voice:rtt', handler);
@@ -196,10 +186,8 @@ contextBridge.exposeInMainWorld('concord', {
         ipcRenderer.on('voice:local-speaking', handler);
         return () => ipcRenderer.removeListener('voice:local-speaking', handler);
     },
-
     getScreenSources: () => invoke('screen:getSources'),
 
-    // Friends
     sendFriendRequest: (userId: string) => invoke('friends:sendRequest', { userId }),
     acceptFriendRequest: (requestId: string) => invoke('friends:acceptRequest', { requestId }),
     rejectFriendRequest: (requestId: string) => invoke('friends:rejectRequest', { requestId }),
@@ -211,26 +199,27 @@ contextBridge.exposeInMainWorld('concord', {
     unblockUser: (userId: string) => invoke('friends:unblock', { userId }),
     listBlockedUsers: () => invoke('friends:listBlocked'),
 
-    // Admin
     kickUser: (roomId: string, userId: string) => invoke('admin:kick', { roomId, userId }),
     banUser: (roomId: string, userId: string, durationSeconds: number) =>
         invoke('admin:ban', { roomId, userId, durationSeconds }),
     muteUser: (roomId: string, userId: string, muted: boolean) =>
         invoke('admin:mute', { roomId, userId, muted }),
 
-    // Auth events
     onAuthExpired: (cb: () => void) => {
         const handler = () => cb();
         ipcRenderer.on('auth:expired', handler);
         return () => ipcRenderer.removeListener('auth:expired', handler);
     },
 
-    // DM
     getOrCreateDM: (userId: string) => invoke('dm:getOrCreate', { userId }),
     listDMs: () => invoke('dm:list'),
     closeDM: (channelId: string) => invoke('dm:close', { channelId }),
-    sendDMMessage: (channelId: string, content: string, attachments?: any[]) =>
-        invoke('dm:sendMessage', { channelId, content, attachments }),
+    sendDMMessage: (
+        channelId: string,
+        content: string,
+        attachments?: any[],
+        replyToId?: string
+    ) => invoke('dm:sendMessage', { channelId, content, attachments, replyToId }),
     listDMMessages: (channelId: string, limit?: number, beforeId?: string) =>
         invoke('dm:listMessages', { channelId, limit, beforeId }),
     startDMCall: (channelId: string, audioOnly?: boolean) =>
@@ -240,6 +229,12 @@ contextBridge.exposeInMainWorld('concord', {
     leaveDMCall: (channelId: string) => invoke('dm:leaveCall', { channelId }),
     endDMCall: (channelId: string) => invoke('dm:endCall', { channelId }),
     getDMCallStatus: (channelId: string) => invoke('dm:callStatus', { channelId }),
+    editDMMessage: (channelId: string, messageId: string, content: string) =>
+        invoke('dm:editMessage', { channelId, messageId, content }),
+    deleteDMMessage: (channelId: string, messageId: string) =>
+        invoke('dm:deleteMessage', { channelId, messageId }),
+    getDMChannel: (channelId: string) =>
+        invoke('dm:getChannel', { channelId }),
 
     markAsRead: (roomId: string, messageId: string) => invoke('chat:markAsRead', { roomId, messageId }),
     markDMAsRead: (channelId: string, messageId: string) => invoke('dm:markAsRead', { channelId, messageId }),

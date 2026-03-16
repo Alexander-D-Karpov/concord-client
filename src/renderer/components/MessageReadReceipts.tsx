@@ -1,7 +1,7 @@
 import React from 'react';
 import { useRoomsStore } from '../hooks/useRoomsStore';
 import { useUsersStore } from '../hooks/useUsersStore';
-import { useAuthStore } from '../hooks/useAuthStore';
+import useAuthStore from '../hooks/useAuthStore';
 
 interface MessageReadReceiptsProps {
     roomId: string;
@@ -36,20 +36,20 @@ const MessageReadReceipts: React.FC<MessageReadReceiptsProps> = ({ roomId, messa
                 return (
                     <div
                         key={member.userId}
-                        className="w-4 h-4 rounded-full border border-dark-900 bg-dark-600 flex items-center justify-center overflow-hidden"
+                        className="w-4 h-4 rounded-full border border-dark-900bg-gray-200 dark:bg-dark-600 flex items-center justify-center overflow-hidden"
                         title={`Read by ${user?.displayName || member.nickname}`}
                     >
                         {user?.avatarUrl ? (
                             <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
                         ) : (
-                            <span className="text-[8px] text-white font-medium">{initial}</span>
+                            <span className="text-[8px] text-gray-900 dark:text-white font-medium">{initial}</span>
                         )}
                     </div>
                 );
             })}
             {remaining > 0 && (
-                <div className="w-4 h-4 rounded-full border border-dark-900 bg-dark-700 flex items-center justify-center">
-                    <span className="text-[8px] text-dark-300 font-medium">+{remaining}</span>
+                <div className="w-4 h-4 rounded-full border border-dark-900bg-gray-100 dark:bg-dark-700 flex items-center justify-center">
+                    <span className="text-[8px] text-gray-600 dark:text-dark-300 font-medium">+{remaining}</span>
                 </div>
             )}
         </div>

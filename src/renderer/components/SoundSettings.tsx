@@ -79,34 +79,34 @@ const SoundSettings: React.FC = () => {
             )}
 
             {(Object.keys(SOUND_LABELS) as SoundType[]).map((type) => (
-                <div key={type} className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                <div key={type} className="flex items-center justify-between p-3bg-gray-100 dark:bg-dark-700 rounded-lg">
                     <div className="flex-1">
-                        <div className="font-medium text-white">{SOUND_LABELS[type]}</div>
-                        <div className="text-sm text-dark-400">
+                        <div className="font-medium text-gray-900 dark:text-white">{SOUND_LABELS[type]}</div>
+                        <div className="text-sm text-gray-500 dark:text-dark-400">
                             {customSounds[type] ? 'Custom sound' : 'Default sound'}
                         </div>
                     </div>
                     <div className="flex items-center space-x-2">
                         <button
                             onClick={() => previewSound(type)}
-                            className="p-2 hover:bg-dark-600 rounded-lg transition"
+                            className="p-2 hover:bg-gray-200 dark:hover:bg-dark-600 rounded-lg transition"
                             title="Preview sound"
                         >
-                            <svg className="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-5 h-5 text-gray-500 dark:text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                             </svg>
                         </button>
                         <button
                             onClick={() => openFilePicker(type)}
                             disabled={loading === type}
-                            className="px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:bg-dark-600 text-white text-sm rounded-lg transition"
+                            className="px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:bg-dark-600 text-gray-900 dark:text-white text-sm rounded-lg transition"
                         >
                             {loading === type ? 'Loading...' : 'Change'}
                         </button>
                         {customSounds[type] && (
                             <button
                                 onClick={() => clearCustomSound(type)}
-                                className="p-2 hover:bg-dark-600 rounded-lg transition text-red-400"
+                                className="p-2 hover:bg-gray-200 dark:hover:bg-dark-600 rounded-lg transition text-red-400"
                                 title="Reset to default"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -118,7 +118,7 @@ const SoundSettings: React.FC = () => {
                 </div>
             ))}
 
-            <p className="text-xs text-dark-500">
+            <p className="text-xs text-gray-400 dark:text-dark-500">
                 Supported formats: MP3, WAV, OGG. Maximum file size: 5MB.
             </p>
         </div>

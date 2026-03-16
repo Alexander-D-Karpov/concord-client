@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { Friend, FriendRequest } from '../types';
+import { mapFriend, mapFriendRequest } from '../utils/mappers';
+import type { Friend, FriendRequest } from '../utils/types';
 
 interface FriendsState {
     friends: Friend[];
@@ -8,20 +9,10 @@ interface FriendsState {
     blockedUsers: string[];
     loading: boolean;
     error: string | null;
-
-    setFriends: (friends: Friend[]) => void;
-    setIncomingRequests: (requests: FriendRequest[]) => void;
-    setOutgoingRequests: (requests: FriendRequest[]) => void;
-    setBlockedUsers: (users: string[]) => void;
-    setLoading: (loading: boolean) => void;
-    setError: (error: string | null) => void;
-
     updateFriendStatus: (userId: string, status: string) => void;
-
     loadFriends: () => Promise<void>;
     loadPendingRequests: () => Promise<void>;
     loadBlockedUsers: () => Promise<void>;
-
     sendRequest: (userId: string) => Promise<void>;
     acceptRequest: (requestId: string) => Promise<void>;
     rejectRequest: (requestId: string) => Promise<void>;
@@ -31,31 +22,6 @@ interface FriendsState {
     unblockUser: (userId: string) => Promise<void>;
 }
 
-const mapFriend = (f: any): Friend => ({
-    userId: f.user_id,
-    handle: f.handle,
-    displayName: f.display_name,
-    avatarUrl: f.avatar_url,
-    status: f.status || 'offline',
-    friendsSince: new Date(Number(f.friends_since?.seconds || 0) * 1000).toISOString(),
-});
-
-const mapRequest = (r: any): FriendRequest => ({
-    id: r.id,
-    fromUserId: r.from_user_id,
-    toUserId: r.to_user_id,
-    status: r.status === 'FRIEND_REQUEST_STATUS_PENDING' ? 'pending' :
-        r.status === 'FRIEND_REQUEST_STATUS_ACCEPTED' ? 'accepted' : 'rejected',
-    createdAt: new Date(Number(r.created_at?.seconds || 0) * 1000).toISOString(),
-    updatedAt: new Date(Number(r.updated_at?.seconds || 0) * 1000).toISOString(),
-    fromHandle: r.from_handle,
-    fromDisplayName: r.from_display_name,
-    fromAvatarUrl: r.from_avatar_url,
-    toHandle: r.to_handle,
-    toDisplayName: r.to_display_name,
-    toAvatarUrl: r.to_avatar_url,
-});
-
 export const useFriendsStore = create<FriendsState>((set, get) => ({
     friends: [],
     incomingRequests: [],
@@ -64,25 +30,15 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
     loading: false,
     error: null,
 
-    setFriends: (friends) => set({ friends }),
-    setIncomingRequests: (requests) => set({ incomingRequests: requests }),
-    setOutgoingRequests: (requests) => set({ outgoingRequests: requests }),
-    setBlockedUsers: (users) => set({ blockedUsers: users }),
-    setLoading: (loading) => set({ loading }),
-    setError: (error) => set({ error }),
-
     updateFriendStatus: (userId, status) => set((state) => ({
-        friends: state.friends.map(f =>
-            f.userId === userId ? { ...f, status } : f
-        )
+        friends: state.friends.map(f => f.userId === userId ? { ...f, status } : f),
     })),
 
     loadFriends: async () => {
         set({ loading: true, error: null });
         try {
             const response = await window.concord.listFriends();
-            const friends = (response?.friends || []).map(mapFriend);
-            set({ friends, loading: false });
+            set({ friends: (response?.friends || []).map(mapFriend), loading: false });
         } catch (err: any) {
             set({ error: err?.message || 'Failed to load friends', loading: false });
         }
@@ -92,9 +48,11 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
         set({ loading: true, error: null });
         try {
             const response = await window.concord.listPendingRequests();
-            const incoming = (response?.incoming || []).map(mapRequest);
-            const outgoing = (response?.outgoing || []).map(mapRequest);
-            set({ incomingRequests: incoming, outgoingRequests: outgoing, loading: false });
+            set({
+                incomingRequests: (response?.incoming || []).map(mapFriendRequest),
+                outgoingRequests: (response?.outgoing || []).map(mapFriendRequest),
+                loading: false,
+            });
         } catch (err: any) {
             set({ error: err?.message || 'Failed to load requests', loading: false });
         }
@@ -110,79 +68,122 @@ export const useFriendsStore = create<FriendsState>((set, get) => ({
         }
     },
 
-    sendRequest: async (userId: string) => {
+    sendRequest: async (userId) => {
         set({ loading: true, error: null });
         try {
-            await window.concord.sendFriendRequest(userId);
-            await get().loadPendingRequests();
+            const userInfo = await window.concord.getUserByHandle(userId).catch(() => null);
+            const targetId = userInfo?.id || userId;
+            const response = await window.concord.sendFriendRequest(targetId);
+
+            if (response?.request) {
+                const mapped = mapFriendRequest(response.request);
+                set((state) => ({
+                    outgoingRequests: state.outgoingRequests.some(r => r.id === mapped.id)
+                        ? state.outgoingRequests.map(r => r.id === mapped.id ? mapped : r)
+                        : [mapped, ...state.outgoingRequests],
+                    loading: false,
+                    error: null,
+                }));
+                return;
+            }
+
+            set({ loading: false, error: null });
         } catch (err: any) {
             set({ error: err?.message || 'Failed to send request', loading: false });
             throw err;
         }
     },
 
-    acceptRequest: async (requestId: string) => {
+    acceptRequest: async (requestId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.acceptFriendRequest(requestId);
-            await Promise.all([get().loadFriends(), get().loadPendingRequests()]);
+            set((state) => ({
+                incomingRequests: state.incomingRequests.filter(r => r.id !== requestId),
+                outgoingRequests: state.outgoingRequests.filter(r => r.id !== requestId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to accept request', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },
 
-    rejectRequest: async (requestId: string) => {
+    rejectRequest: async (requestId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.rejectFriendRequest(requestId);
-            await get().loadPendingRequests();
+            set((state) => ({
+                incomingRequests: state.incomingRequests.filter(r => r.id !== requestId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to reject request', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },
 
-    cancelRequest: async (requestId: string) => {
+    cancelRequest: async (requestId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.cancelFriendRequest(requestId);
-            await get().loadPendingRequests();
+            set((state) => ({
+                outgoingRequests: state.outgoingRequests.filter(r => r.id !== requestId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to cancel request', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },
 
-    removeFriend: async (userId: string) => {
+    removeFriend: async (userId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.removeFriend(userId);
-            await get().loadFriends();
+            set((state) => ({
+                friends: state.friends.filter(f => f.userId !== userId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to remove friend', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },
 
-    blockUser: async (userId: string) => {
+    blockUser: async (userId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.blockUser(userId);
-            await Promise.all([get().loadBlockedUsers(), get().loadFriends()]);
+            set((state) => ({
+                blockedUsers: state.blockedUsers.includes(userId)
+                    ? state.blockedUsers
+                    : [...state.blockedUsers, userId],
+                friends: state.friends.filter(f => f.userId !== userId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to block user', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },
 
-    unblockUser: async (userId: string) => {
+    unblockUser: async (userId) => {
         set({ loading: true, error: null });
         try {
             await window.concord.unblockUser(userId);
-            await get().loadBlockedUsers();
+            set((state) => ({
+                blockedUsers: state.blockedUsers.filter(id => id !== userId),
+                loading: false,
+                error: null,
+            }));
         } catch (err: any) {
-            set({ error: err?.message || 'Failed to unblock user', loading: false });
+            set({ error: err?.message || 'Failed', loading: false });
             throw err;
         }
     },

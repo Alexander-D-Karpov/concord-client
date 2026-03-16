@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Room, Member, RoomInvite } from '../types';
+import {Member, Room, RoomInvite} from "@/utils/types";
 
 interface RoomsState {
     rooms: Room[];
@@ -7,7 +7,6 @@ interface RoomsState {
     members: Record<string, Member[]>;
     roomInvites: RoomInvite[];
     setRooms: (rooms: Room[]) => void;
-    addRoom: (room: Room) => void;
     updateRoom: (room: Room) => void;
     removeRoom: (roomId: string) => void;
     setCurrentRoom: (roomId: string | null) => void;
@@ -23,8 +22,6 @@ export const useRoomsStore = create<RoomsState>((set) => ({
     roomInvites: [],
 
     setRooms: (rooms) => set({ rooms }),
-
-    addRoom: (room) => set((state) => ({ rooms: [...state.rooms, room] })),
 
     updateRoom: (room) =>
         set((state) => ({

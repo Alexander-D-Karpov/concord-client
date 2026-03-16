@@ -1,215 +1,129 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ReactionPickerProps {
+    anchor: { x: number; y: number } | null;
     onSelect: (emoji: string) => void;
     onClose: () => void;
-    position?: { x: number; y: number };
 }
 
-const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '🔥', '👏', '😢', '🎉'];
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '🎉'];
+const ALL_REACTIONS = [
+    '😀', '😄', '😁', '😅', '🤣', '🙂', '😉', '😍', '😘', '😎',
+    '🤔', '😴', '😭', '😡', '🥳', '🤯', '👀', '👏', '🙌', '💀',
+    '👍', '👎', '❤️', '🔥', '🎉', '🙏', '✅', '❌', '💯', '✨',
+];
 
-const CATEGORIES: Record<string, { icon: string; emojis: string[] }> = {
-    'People': {
-        icon: '😀',
-        emojis: [
-            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊',
-            '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙', '🥲', '😋', '😛', '😜',
-            '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🫡', '🤐', '🤨', '😐', '😑',
-            '😶', '🫥', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴',
-            '😷', '🤒', '🤕', '🤢', '🤮', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳',
-            '🥸', '😎', '🤓', '🧐', '😕', '🫤', '😟', '🙁', '😮', '😯', '😲', '😳',
-            '🥺', '🥹', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣',
-            '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀',
-            '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖',
-        ],
-    },
-    'Gestures': {
-        icon: '👋',
-        emojis: [
-            '👋', '🤚', '🖐️', '✋', '🖖', '🫱', '🫲', '🫳', '🫴', '👌', '🤌', '🤏',
-            '✌️', '🤞', '🫰', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️',
-            '🫵', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '🫶', '👐', '🤲',
-            '🤝', '🙏', '💪', '🦾',
-        ],
-    },
-    'Hearts': {
-        icon: '❤️',
-        emojis: [
-            '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❤️‍🔥', '❤️‍🩹',
-            '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟',
-        ],
-    },
-    'Nature': {
-        icon: '🌿',
-        emojis: [
-            '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮',
-            '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🦅', '🦆', '🦉', '🐺', '🐗', '🐴',
-            '🦄', '🐝', '🪱', '🐛', '🦋', '🐌', '🌸', '🌺', '🌻', '🌹', '🌷', '🌵',
-            '🎄', '🌲', '🌳', '🍀', '🍁', '🍂', '🍃', '🌍', '🌈', '⭐', '🌙', '☀️',
-        ],
-    },
-    'Food': {
-        icon: '🍕',
-        emojis: [
-            '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍒', '🍑', '🥭',
-            '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🌶️', '🌽', '🥕', '🧅', '🥔', '🍞',
-            '🥐', '🧀', '🍖', '🍗', '🥩', '🌭', '🍔', '🍟', '🍕', '🌮', '🌯', '🥗',
-            '🍜', '🍣', '🍤', '🍩', '🍪', '🎂', '🍰', '🧁', '🍫', '🍬', '🍭', '🍿',
-            '☕', '🍵', '🥤', '🍺', '🍻', '🥂', '🍷', '🍸', '🍹',
-        ],
-    },
-    'Activities': {
-        icon: '⚽',
-        emojis: [
-            '⚽', '🏀', '🏈', '⚾', '🥎', '🎾', '🏐', '🏉', '🥏', '🎱', '🏓', '🏸',
-            '🏒', '🥅', '⛳', '🏹', '🎣', '🤿', '🥊', '🥋', '🎿', '⛷️', '🏂', '🪂',
-            '🏋️', '🤸', '🏆', '🥇', '🥈', '🥉', '🎮', '🕹️', '🎲', '🎯', '🎳', '🎪',
-            '🎨', '🎬', '🎤', '🎧', '🎵', '🎶', '🎹', '🎸', '🎺', '🎻', '🪘', '🥁',
-        ],
-    },
-    'Objects': {
-        icon: '💡',
-        emojis: [
-            '🎉', '🎊', '🎈', '🎁', '🎀', '🏷️', '📦', '💡', '🔦', '🕯️', '💰', '💳',
-            '💎', '⚙️', '🔧', '🔨', '🪛', '🔩', '⛏️', '🔫', '💣', '🪓', '🗡️', '⚔️',
-            '🛡️', '🚬', '🪦', '🏺', '🔮', '📿', '🧿', '💈', '🔭', '🔬', '💊', '💉',
-            '🩹', '🧬', '🦠', '🧪', '🌡️', '🧹', '🪣', '🧺', '🪤', '📱', '💻', '⌨️',
-            '🖥️', '🖨️', '📷', '📹', '📺', '📻', '🎙️', '📡', '🔑', '🗝️', '🔒', '🔓',
-        ],
-    },
-    'Symbols': {
-        icon: '💯',
-        emojis: [
-            '💯', '💢', '💥', '💫', '💦', '💨', '🕳️', '💬', '👁️‍🗨️', '🗨️', '🗯️', '💭',
-            '❗', '❓', '❕', '❔', '‼️', '⁉️', '⚠️', '🚸', '🔅', '🔆', '⚜️', '🔱',
-            '✅', '❌', '❎', '➕', '➖', '➗', '✖️', '💲', '💱', '©️', '®️', '™️',
-            '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '⚫', '⚪', '🟤', '🔶', '🔷', '🔸',
-        ],
-    },
-    'Flags': {
-        icon: '🏁',
-        emojis: [
-            '🏁', '🚩', '🎌', '🏴', '🏳️', '🏳️‍🌈', '🏳️‍⚧️', '🏴‍☠️',
-            '🇺🇸', '🇬🇧', '🇫🇷', '🇩🇪', '🇯🇵', '🇰🇷', '🇨🇳', '🇷🇺',
-            '🇧🇷', '🇮🇳', '🇨🇦', '🇦🇺', '🇮🇹', '🇪🇸', '🇲🇽', '🇳🇱',
-        ],
-    },
-};
+const PICKER_WIDTH = 320;
+const PICKER_HEIGHT = 360;
+const VIEWPORT_PADDING = 12;
 
-const ALL_EMOJIS = Object.values(CATEGORIES).flatMap(c => c.emojis);
-
-const ReactionPicker: React.FC<ReactionPickerProps> = ({ onSelect, onClose }) => {
-    const [activeCategory, setActiveCategory] = useState('People');
+const ReactionPicker: React.FC<ReactionPickerProps> = ({ anchor, onSelect, onClose }) => {
+    const ref = useRef<HTMLDivElement>(null);
     const [search, setSearch] = useState('');
-    const pickerRef = useRef<HTMLDivElement>(null);
-    const searchRef = useRef<HTMLInputElement>(null);
-    const gridRef = useRef<HTMLDivElement>(null);
+    const [position, setPosition] = useState({ left: 0, top: 0 });
 
     useEffect(() => {
-        searchRef.current?.focus();
-    }, []);
-
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        const handlePointerDown = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) {
                 onClose();
             }
         };
+
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
         };
-        document.addEventListener('mousedown', handleClickOutside);
+
+        document.addEventListener('mousedown', handlePointerDown);
         document.addEventListener('keydown', handleEscape);
+
         return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('mousedown', handlePointerDown);
             document.removeEventListener('keydown', handleEscape);
         };
     }, [onClose]);
 
-    const filteredEmojis = useMemo(() => {
-        if (!search.trim()) return null;
-        const q = search.toLowerCase();
-        return ALL_EMOJIS.filter(e => e.includes(q));
-    }, [search]);
+    useLayoutEffect(() => {
+        if (!anchor) return;
 
-    const displayEmojis = filteredEmojis || CATEGORIES[activeCategory]?.emojis || [];
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
 
-    const handleSelect = (emoji: string) => {
-        onSelect(emoji);
-        onClose();
-    };
+        let left = anchor.x;
+        let top = anchor.y + 10;
 
-    return (
-        <div className="fixed inset-0 z-50" onClick={onClose}>
+        if (left + PICKER_WIDTH > viewportWidth - VIEWPORT_PADDING) {
+            left = viewportWidth - PICKER_WIDTH - VIEWPORT_PADDING;
+        }
+
+        if (left < VIEWPORT_PADDING) {
+            left = VIEWPORT_PADDING;
+        }
+
+        if (top + PICKER_HEIGHT > viewportHeight - VIEWPORT_PADDING) {
+            top = anchor.y - PICKER_HEIGHT - 10;
+        }
+
+        if (top < VIEWPORT_PADDING) {
+            top = VIEWPORT_PADDING;
+        }
+
+        setPosition({ left, top });
+    }, [anchor]);
+
+    if (!anchor) return null;
+
+    const filtered = ALL_REACTIONS.filter((emoji) =>
+        !search.trim() || emoji.includes(search.trim())
+    );
+
+    return createPortal(
+        <div
+            className="fixed inset-0 z-[1200]"
+            aria-hidden={false}
+        >
             <div
-                ref={pickerRef}
-                className="absolute bottom-16 right-4 bg-dark-800 rounded-xl border border-dark-600 shadow-2xl w-[352px] flex flex-col overflow-hidden animate-scale-in"
-                onClick={(e) => e.stopPropagation()}
-                style={{ maxHeight: '420px' }}
+                ref={ref}
+                className="absolute w-80 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-dark-600 dark:bg-dark-700"
+                style={{ left: position.left, top: position.top }}
             >
-                <div className="px-3 pt-3 pb-2 flex flex-wrap gap-1 border-b border-dark-700">
-                    {QUICK_REACTIONS.map(emoji => (
+                <div className="flex items-center gap-1 border-b border-gray-200 px-3 py-2 dark:border-dark-600">
+                    {QUICK_REACTIONS.map((emoji) => (
                         <button
                             key={emoji}
-                            onClick={() => handleSelect(emoji)}
-                            className="w-9 h-9 flex items-center justify-center text-xl hover:bg-dark-600 rounded-lg transition active:scale-90"
+                            type="button"
+                            onClick={() => {
+                                onSelect(emoji);
+                                onClose();
+                            }}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-xl transition hover:bg-gray-100 dark:hover:bg-dark-600"
                         >
                             {emoji}
                         </button>
                     ))}
                 </div>
 
-                <div className="px-3 py-2">
-                    <div className="relative">
-                        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        <input
-                            ref={searchRef}
-                            type="text"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="Search emoji..."
-                            className="w-full pl-8 pr-3 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-white text-sm placeholder-dark-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                        />
-                    </div>
+                <div className="border-b border-gray-200 p-3 dark:border-dark-600">
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search emoji..."
+                        className="input-base h-10 w-full"
+                    />
                 </div>
 
-                {!search && (
-                    <div className="flex px-1 border-b border-dark-700 overflow-x-auto scrollbar-none">
-                        {Object.entries(CATEGORIES).map(([name, cat]) => (
+                <div className="max-h-64 overflow-y-auto p-2">
+                    <div className="grid grid-cols-6 gap-1">
+                        {filtered.map((emoji) => (
                             <button
-                                key={name}
+                                key={emoji}
+                                type="button"
                                 onClick={() => {
-                                    setActiveCategory(name);
-                                    gridRef.current?.scrollTo({ top: 0 });
+                                    onSelect(emoji);
+                                    onClose();
                                 }}
-                                className={`flex-shrink-0 px-2 py-1.5 text-lg transition rounded-t-lg ${
-                                    activeCategory === name ? 'bg-dark-600' : 'hover:bg-dark-700'
-                                }`}
-                                title={name}
-                            >
-                                {cat.icon}
-                            </button>
-                        ))}
-                    </div>
-                )}
-
-                <div ref={gridRef} className="flex-1 overflow-y-auto p-2 min-h-0" style={{ maxHeight: '220px' }}>
-                    {!search && (
-                        <div className="text-xs font-semibold text-dark-400 uppercase tracking-wider px-1 mb-1">
-                            {activeCategory}
-                        </div>
-                    )}
-                    {search && filteredEmojis?.length === 0 && (
-                        <div className="text-center py-8 text-dark-400 text-sm">No emoji found</div>
-                    )}
-                    <div className="grid grid-cols-8 gap-0.5">
-                        {displayEmojis.map((emoji, i) => (
-                            <button
-                                key={`${emoji}-${i}`}
-                                onClick={() => handleSelect(emoji)}
-                                className="w-9 h-9 flex items-center justify-center text-xl hover:bg-dark-600 rounded-lg transition active:scale-90"
+                                className="flex h-11 w-11 items-center justify-center rounded-xl text-2xl transition hover:bg-gray-100 dark:hover:bg-dark-600"
                             >
                                 {emoji}
                             </button>
@@ -217,7 +131,8 @@ const ReactionPicker: React.FC<ReactionPickerProps> = ({ onSelect, onClose }) =>
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

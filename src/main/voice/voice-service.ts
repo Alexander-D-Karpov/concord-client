@@ -24,10 +24,17 @@ import {
     buildNackPacket,
     buildPliPacket,
     buildReceiverReport,
+    buildSubscribePacket,
+    buildQualityReportPacket,
 } from "../../shared/voice/protocol";
 
-import type { MediaHeader, ParticipantInfo, ParticipantLeftPayload } from "../../shared/voice/types";
-import type { VoiceConfig } from "../../shared/voice/types";
+import type {
+    MediaHeader,
+    ParticipantInfo,
+    ParticipantLeftPayload,
+    VoiceConfig,
+    WelcomePayload,
+} from "../../shared/voice/types";
 
 const DEBUG_VOICE = true;
 
@@ -35,21 +42,16 @@ export interface VoiceServiceConfig extends VoiceConfig {}
 
 export class VoiceService extends EventEmitter {
     private config: VoiceServiceConfig;
-
     private socket?: dgram.Socket;
-
     private keyRing: KeyRing;
-    private replayFilters = new Map<string, ReplayFilter>(); // `${keyId}:${ssrc}`
-
+    private replayFilters = new Map<string, ReplayFilter>();
     private fragmenter = new Fragmenter();
     private reassemblers = new Map<number, Reassembler>();
-
     private retransmitCache = new RetransmitCache();
     private nackTracker = new NackTracker();
     private pliTracker = new PliTracker();
     private stats = new StatsCollector();
     private nackInterval?: NodeJS.Timeout;
-
     private connected = false;
     private connectingPromise: Promise<void> | null = null;
 
@@ -70,7 +72,9 @@ export class VoiceService extends EventEmitter {
 
     private pingInterval?: NodeJS.Timeout;
     private rrInterval?: NodeJS.Timeout;
+    private qualityInterval?: NodeJS.Timeout;
     private connectionTimeout?: NodeJS.Timeout;
+    private lastPongAt = 0;
 
     private connectResolve?: () => void;
     private connectReject?: (err: Error) => void;
@@ -84,23 +88,19 @@ export class VoiceService extends EventEmitter {
     private localMuted = false;
     private localVideoEnabled = false;
     private localScreenSharing = false;
-
-    private qualityInterval?: NodeJS.Timeout;
-    private localQuality: number = 0;
-    private peerQualities = new Map<string, number>(); // userId -> quality
-
-    private seenFirstVideoFrom = new Set<number>();
+    private localQuality = 0;
+    private peerQualities = new Map<string, number>();
+    private currentSubscriptions: number[] = [];
 
     constructor(config: VoiceServiceConfig) {
         super();
         this.config = config;
-
         this.keyRing = new KeyRing(config.roomId);
         this.keyRing.setKey(config.crypto.keyId, config.crypto.keyMaterial);
-
         this.audioCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
         this.videoCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
         this.screenCounter = BigInt(Math.floor(Math.random() * 0xffffffff));
+        this.localVideoEnabled = !!config.codec.video;
     }
 
     async connect(): Promise<void> {
@@ -120,7 +120,6 @@ export class VoiceService extends EventEmitter {
 
             try {
                 this.socket = dgram.createSocket("udp4");
-
                 this.socket.on("error", (err) => {
                     this.emit("error", err);
                     if (!this.connected && this.connectReject) {
@@ -130,19 +129,14 @@ export class VoiceService extends EventEmitter {
                         this.connectReject(err);
                     }
                 });
-
                 this.socket.on("message", (msg) => this.handleMessage(msg));
-
                 this.socket.on("close", () => {
                     if (this.connected) {
                         this.connected = false;
                         this.emit("disconnected");
                     }
                 });
-
-                this.socket.bind(() => {
-                    this.sendHello();
-                });
+                this.socket.bind(() => this.sendHello());
             } catch (err: any) {
                 this.cleanupTimers();
                 this.closeSocket();
@@ -156,21 +150,17 @@ export class VoiceService extends EventEmitter {
 
     disconnect(): void {
         if (!this.connected && !this.connectingPromise && !this.socket) return;
-
         this.cleanupTimers();
-
+        this.missedPongs = 0;
         const socket = this.socket;
         const wasConnected = this.connected;
         const ssrc = this.audioSsrc;
-
         this.connected = false;
         this.connectingPromise = null;
-
         this.sessionId = undefined;
         this.audioSsrc = undefined;
         this.videoSsrc = undefined;
         this.screenSsrc = undefined;
-
         this.participants.clear();
         this.ssrcToUserId.clear();
         this.replayFilters.clear();
@@ -179,9 +169,9 @@ export class VoiceService extends EventEmitter {
         this.nackTracker.clear();
         this.pliTracker.clear();
         this.stats.reset();
-        this.seenFirstVideoFrom.clear();
         this.peerQualities.clear();
         this.localQuality = 0;
+        this.currentSubscriptions = [];
 
         if (socket && wasConnected && ssrc) {
             const packet = buildByePacket(ssrc);
@@ -189,9 +179,7 @@ export class VoiceService extends EventEmitter {
             socket.send(buf, 0, buf.length, this.config.endpoint.port, this.config.endpoint.host, () => {
                 try { socket.close(); } catch {}
             });
-            setTimeout(() => {
-                try { socket.close(); } catch {}
-            }, 200);
+            setTimeout(() => { try { socket.close(); } catch {} }, 200);
         } else {
             this.closeSocket();
         }
@@ -202,39 +190,27 @@ export class VoiceService extends EventEmitter {
 
     private closeSocket(): void {
         if (!this.socket) return;
-        try {
-            this.socket.close();
-        } catch {}
+        try { this.socket.close(); } catch {}
         this.socket = undefined;
     }
 
     private cleanupTimers(): void {
-        if (this.connectionTimeout) {
-            clearTimeout(this.connectionTimeout);
-            this.connectionTimeout = undefined;
-        }
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-            this.pingInterval = undefined;
-        }
-        if (this.rrInterval) {
-            clearInterval(this.rrInterval);
-            this.rrInterval = undefined;
-        }
-        if (this.qualityInterval) {
-            clearInterval(this.qualityInterval);
-            this.qualityInterval = undefined;
-        }
-        if (this.nackInterval) {
-            clearInterval(this.nackInterval);
-            this.nackInterval = undefined;
-        }
+        if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+        if (this.pingInterval) clearInterval(this.pingInterval);
+        if (this.rrInterval) clearInterval(this.rrInterval);
+        if (this.qualityInterval) clearInterval(this.qualityInterval);
+        if (this.nackInterval) clearInterval(this.nackInterval);
+        this.connectionTimeout = undefined;
+        this.pingInterval = undefined;
+        this.rrInterval = undefined;
+        this.qualityInterval = undefined;
+        this.nackInterval = undefined;
     }
 
     private sendHello(): void {
         const payload = {
             token: this.config.voiceToken,
-            protocol: 1,
+            protocol: 2,
             codec: this.config.codec.audio,
             room_id: this.config.roomId,
             user_id: this.config.userId,
@@ -245,28 +221,12 @@ export class VoiceService extends EventEmitter {
                 key_id: [this.config.crypto.keyId & 0xff],
             },
         };
-
-        const packet = buildHelloPacket(payload);
-        this.send(Buffer.from(packet));
-    }
-
-    private startMediaStateInterval(): void {
-        setInterval(() => {
-            if (!this.connected || !this.audioSsrc) return;
-            this.setMediaState(
-                this.config.userId === this.config.userId ? false : false,
-                false,
-                false
-            );
-        }, 2000);
+        this.send(Buffer.from(buildHelloPacket(payload)));
     }
 
     private handleMessage(msg: Buffer): void {
         if (msg.length < 1) return;
-
-        const type = msg[0];
-
-        switch (type) {
+        switch (msg[0]) {
             case PacketType.WELCOME:
                 this.handleWelcome(msg);
                 break;
@@ -295,32 +255,27 @@ export class VoiceService extends EventEmitter {
             case PacketType.PACKET_TYPE_QUALITY_REPORT:
                 this.handleQualityReport(msg);
                 break;
+            case PacketType.RR:
+                this.handleReceiverReport(msg);
+                break;
         }
     }
 
     private startNackInterval(): void {
         this.nackInterval = setInterval(() => {
             if (!this.connected || !this.audioSsrc) return;
-
             for (const [ssrc] of this.ssrcToUserId) {
                 if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
-
-                const isVideoSsrc = this.isRemoteVideoOrScreen(ssrc);
-                if (!isVideoSsrc) continue; // skip audio SSRCs entirely
+                if (!this.isRemoteVideoOrScreen(ssrc)) continue;
 
                 const missing = this.stats.getMissingSequences(ssrc, 16);
                 if (missing.length > 0 && this.nackTracker.shouldSendNack(ssrc)) {
-                    const packet = buildNackPacket(ssrc, missing);
-                    this.send(Buffer.from(packet));
+                    this.send(Buffer.from(buildNackPacket(ssrc, missing)));
                 }
 
                 const reassembler = this.reassemblers.get(ssrc);
-                if (reassembler) {
-                    const rStats = reassembler.getStats();
-                    if (rStats.needsKeyframe && this.pliTracker.shouldSendPli(ssrc)) {
-                        const packet = buildPliPacket(ssrc);
-                        this.send(Buffer.from(packet));
-                    }
+                if (reassembler?.getStats().needsKeyframe && this.pliTracker.shouldSendPli(ssrc)) {
+                    this.send(Buffer.from(buildPliPacket(ssrc)));
                 }
             }
         }, 40);
@@ -335,56 +290,56 @@ export class VoiceService extends EventEmitter {
 
     private handleWelcome(msg: Buffer): void {
         try {
-            const json = msg.slice(1).toString("utf8");
-            const welcome: any = JSON.parse(json);
-
+            const welcome = JSON.parse(msg.slice(1).toString("utf8")) as any;
             this.cleanupTimers();
 
             this.sessionId = welcome.sessionId ?? welcome.session_id;
-            this.audioSsrc = welcome.ssrc ?? welcome.audio_ssrc;
+            this.audioSsrc = welcome.ssrc;
             this.videoSsrc = welcome.videoSsrc ?? welcome.video_ssrc;
             this.screenSsrc = welcome.screenSsrc ?? welcome.screen_ssrc;
-
-            const participants = Array.isArray(welcome.participants) ? welcome.participants : [];
-
             this.participants.clear();
             this.ssrcToUserId.clear();
 
-            for (const raw of participants) {
-                const userId = raw.userId ?? raw.user_id;
+            const rawParticipants = Array.isArray(welcome.participants) ? welcome.participants : [];
+            for (const raw of rawParticipants) {
+                const userId = raw.user_id || raw.userId;
                 if (!userId) continue;
 
-                const audio = raw.ssrc ?? raw.audioSsrc ?? raw.audio_ssrc ?? 0;
-                const video = raw.videoSsrc ?? raw.video_ssrc ?? 0;
-                const screen = raw.screenSsrc ?? raw.screen_ssrc ?? 0;
+                const ssrc = (raw.ssrc ?? 0) >>> 0;
+                const videoSsrc = (raw.video_ssrc ?? raw.videoSsrc ?? 0) >>> 0;
+                const screenSsrc = (raw.screen_ssrc ?? raw.screenSsrc ?? 0) >>> 0;
 
                 const p: ParticipantInfo = {
                     userId,
-                    ssrc: audio >>> 0,
-                    videoSsrc: (video >>> 0) || undefined,
-                    screenSsrc: (screen >>> 0) || undefined,
-                    muted: !!(raw.muted ?? false),
-                    videoEnabled: !!(raw.videoEnabled ?? raw.video_enabled ?? false),
-                    screenSharing: !!(raw.screenSharing ?? raw.screen_sharing ?? false),
-                    displayName: raw.displayName ?? raw.display_name,
-                    avatarUrl: raw.avatarUrl ?? raw.avatar_url,
+                    ssrc,
+                    videoSsrc: videoSsrc || undefined,
+                    screenSsrc: screenSsrc || undefined,
+                    muted: !!(raw.muted),
+                    videoEnabled: !!(raw.video_enabled ?? raw.videoEnabled),
+                    screenSharing: !!(raw.screen_sharing ?? raw.screenSharing),
+                    speaking: !!(raw.speaking),
+                    displayName: raw.display_name || raw.displayName,
+                    avatarUrl: raw.avatar_url || raw.avatarUrl,
+                    quality: raw.quality,
+                    rttMs: raw.rtt_ms ?? raw.rttMs,
+                    packetLoss: raw.packet_loss ?? raw.packetLoss,
+                    jitterMs: raw.jitter_ms ?? raw.jitterMs,
                 };
-
                 this.participants.set(userId, p);
-
-                if (p.ssrc) this.ssrcToUserId.set(p.ssrc, userId);
-                if (p.videoSsrc) this.ssrcToUserId.set(p.videoSsrc, userId);
-                if (p.screenSsrc) this.ssrcToUserId.set(p.screenSsrc, userId);
+                if (ssrc) this.ssrcToUserId.set(ssrc, userId);
+                if (videoSsrc) this.ssrcToUserId.set(videoSsrc, userId);
+                if (screenSsrc) this.ssrcToUserId.set(screenSsrc, userId);
             }
 
             this.connected = true;
-
             this.baseTimeMs = Date.now();
-
-            this.startPingInterval();
-            this.startRRInterval();
+            this.lastPongAt = Date.now();
+            this.missedPongs = 0;
+            this.startPingInterval(welcome.pingIntervalMs ?? welcome.ping_interval_ms ?? 5000);
+            this.startRRInterval(welcome.rrIntervalMs ?? welcome.rr_interval_ms ?? 250);
             this.startQualityInterval();
             this.startNackInterval();
+            this.pushSubscriptions();
 
             this.connectResolve?.();
             this.connectResolve = undefined;
@@ -406,8 +361,10 @@ export class VoiceService extends EventEmitter {
     private startQualityInterval(): void {
         this.qualityInterval = setInterval(() => {
             if (!this.connected || !this.audioSsrc) return;
-
-            const rtt = this.stats.getStats().rttMs;
+            const agg = this.stats.getStats();
+            const rtt = agg.rttMs;
+            const avgLoss = this.stats.getAverageLoss();
+            const avgJitter = this.stats.getAverageJitter();
             this.localQuality = this.stats.calculateLocalQuality(rtt);
 
             const perPeer = new Map<number, number>();
@@ -423,131 +380,81 @@ export class VoiceService extends EventEmitter {
                 peerUsers: Object.fromEntries(this.peerQualities),
             });
 
-            const payload = JSON.stringify({
+            this.send(Buffer.from(buildQualityReportPacket({
                 ssrc: this.audioSsrc,
                 user_id: this.config.userId,
                 room_id: this.config.roomId,
                 quality: this.localQuality,
                 rtt_ms: rtt,
-                packet_loss: this.stats.getStats().totalPacketsReceived > 0
-                    ? 0 : 0,
-                jitter_ms: 0,
-            });
-            const jsonBytes = new TextEncoder().encode(payload);
-            const packet = new Uint8Array(1 + jsonBytes.length);
-            packet[0] = 0x10;
-            packet.set(jsonBytes, 1);
-            this.send(Buffer.from(packet));
-            this.setMediaState(this.localMuted, this.localVideoEnabled, this.localScreenSharing);
+                packet_loss: avgLoss,
+                jitter_ms: avgJitter,
+            })));
         }, 2000);
     }
 
     private handleQualityReport(msg: Buffer): void {
         try {
-            const json = msg.slice(1).toString("utf8");
-            const data = JSON.parse(json);
+            const data = JSON.parse(msg.slice(1).toString("utf8"));
             const userId = data.user_id || data.userId;
             if (!userId) return;
             const quality = data.quality ?? 0;
             this.peerQualities.set(userId, quality);
-
-            this.emit("peer-quality", { userId, quality, rttMs: data.rtt_ms });
+            const existing = this.participants.get(userId);
+            if (existing) {
+                this.participants.set(userId, {
+                    ...existing,
+                    quality,
+                    rttMs: data.rtt_ms,
+                    packetLoss: data.packet_loss,
+                    jitterMs: data.jitter_ms,
+                });
+            }
+            this.emit("peer-quality", { userId, quality, rttMs: data.rtt_ms, packetLoss: data.packet_loss, jitterMs: data.jitter_ms });
         } catch {}
     }
 
-    getLocalQuality(): number {
-        return this.localQuality;
-    }
-
-    private replayKey(keyId: number, ssrc: number): string {
-        return `${keyId & 0xff}:${ssrc >>> 0}`;
-    }
+    private replayKey(keyId: number, ssrc: number): string { return `${keyId & 0xff}:${ssrc >>> 0}`; }
 
     private handleMedia(msg: Buffer): void {
-        if (msg.length < MEDIA_HEADER_SIZE) {
-            if (DEBUG_VOICE) console.log('[VoiceService] Media packet too small:', msg.length);
-            return;
-        }
-
+        if (msg.length < MEDIA_HEADER_SIZE) return;
         const header = decodeMediaHeader(new Uint8Array(msg.buffer, msg.byteOffset, MEDIA_HEADER_SIZE));
-        if (!header) {
-            if (DEBUG_VOICE) console.log('[VoiceService] Failed to decode header');
-            return;
-        }
-
+        if (!header) return;
         const ssrc = header.ssrc >>> 0;
         const keyId = header.keyId & 0xff;
         const counter = header.counter;
         const isVideo = header.type === PacketType.VIDEO;
 
-        if (DEBUG_VOICE && this.decryptOk % 100 === 0) {
-            console.log(`[VoiceService] handleMedia: type=${isVideo ? 'video' : 'audio'}, ssrc=${ssrc}, keyId=${keyId}, counter=${counter}, size=${msg.length}`);
-        }
+        if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) return;
 
-        // Check if this SSRC belongs to us (skip our own packets)
-        if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) {
-            return; // Don't process our own packets
-        }
-
-        const rk = this.replayKey(keyId, ssrc);
-        let rf = this.replayFilters.get(rk);
+        let rf = this.replayFilters.get(this.replayKey(keyId, ssrc));
         if (!rf) {
             rf = new ReplayFilter();
-            this.replayFilters.set(rk, rf);
-            if (DEBUG_VOICE) console.log(`[VoiceService] Created new ReplayFilter for keyId=${keyId}, ssrc=${ssrc}`);
+            this.replayFilters.set(this.replayKey(keyId, ssrc), rf);
         }
-
-        if (!rf.accept(counter)) {
-            if (DEBUG_VOICE) console.log(`[VoiceService] Replay filter rejected packet: ssrc=${ssrc}, counter=${counter}`);
-            return;
-        }
+        if (!rf.accept(counter)) return;
 
         const aad = Buffer.from(msg.buffer, msg.byteOffset, MEDIA_HEADER_SIZE);
         const ciphertext = Buffer.from(msg.buffer, msg.byteOffset + MEDIA_HEADER_SIZE);
-
-        if (ciphertext.length === 0) {
-            if (DEBUG_VOICE) console.log('[VoiceService] Empty ciphertext');
-            return;
-        }
+        if (ciphertext.length === 0) return;
 
         const plaintext = this.keyRing.open(aad, ciphertext, keyId, ssrc, counter);
-
         if (!plaintext) {
             this.decryptFail++;
-            if (DEBUG_VOICE) {
-                console.error(`[VoiceService] Decrypt FAILED: ssrc=${ssrc}, keyId=${keyId}, counter=${counter}, cipherLen=${ciphertext.length}, ok=${this.decryptOk}, fail=${this.decryptFail}`);
-            }
-            this.emit("decrypt-error", {
-                ssrc,
-                keyId,
-                sequence: header.sequence,
-                decryptOk: this.decryptOk,
-                decryptFail: this.decryptFail,
-            });
+            this.emit("decrypt-error", { ssrc, keyId, sequence: header.sequence, decryptOk: this.decryptOk, decryptFail: this.decryptFail });
             return;
         }
-
         this.decryptOk++;
 
-        if (DEBUG_VOICE && this.decryptOk % 100 === 1) {
-            console.log(`[VoiceService] Decrypt OK #${this.decryptOk}: ssrc=${ssrc}, type=${isVideo ? 'video' : 'audio'}, plainLen=${plaintext.length}`);
-        }
-
-        // Update SSRC mapping if we don't have it
         if (!this.ssrcToUserId.has(ssrc)) {
-            // Try to find user by checking participants
             for (const [userId, p] of this.participants) {
                 if (p.ssrc === ssrc || p.videoSsrc === ssrc || p.screenSsrc === ssrc) {
                     this.ssrcToUserId.set(ssrc, userId);
-                    if (DEBUG_VOICE) console.log(`[VoiceService] Mapped SSRC ${ssrc} to user ${userId}`);
                     break;
                 }
             }
         }
 
-        const timestampHz = isVideo ? 90000 : 48000;
-        this.stats.recordPacketReceived(ssrc, header.sequence, header.timestamp, timestampHz, msg.length);
-
+        this.stats.recordPacketReceived(ssrc, header.sequence, header.timestamp, isVideo ? 90000 : 48000, msg.length);
         this.emitDecryptedMedia(header, plaintext, isVideo);
     }
 
@@ -558,10 +465,8 @@ export class VoiceService extends EventEmitter {
                 reassembler = new Reassembler();
                 this.reassemblers.set(header.ssrc, reassembler);
             }
-
             const isKeyframe = (header.flags & PacketFlags.KEYFRAME) !== 0;
             const frame = reassembler.addFragment(payload, isKeyframe);
-
             if (frame) {
                 this.emit("video", {
                     ssrc: header.ssrc,
@@ -584,65 +489,37 @@ export class VoiceService extends EventEmitter {
         });
     }
 
-    private handlePong(msg: Buffer): void {
-        if (msg.length < 9) return;
-        const view = new DataView(msg.buffer, msg.byteOffset);
-        const sentTime = Number(view.getBigUint64(1, false));
-        const rtt = Date.now() - sentTime;
-        this.stats.recordRtt(rtt);
-        this.emit("rtt", rtt);
-    }
-
     private handleSpeaking(msg: Buffer): void {
         try {
-            const json = msg.slice(1).toString("utf8");
-            const data = JSON.parse(json);
-
+            const data = JSON.parse(msg.slice(1).toString("utf8"));
             const userId = data.userId || data.user_id;
             const ssrc = (data.ssrc ?? 0) >>> 0;
             const videoSsrc = (data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0;
             const screenSsrc = (data.screenSsrc ?? data.screen_ssrc ?? 0) >>> 0;
-
             if (userId) {
                 if (ssrc) this.ssrcToUserId.set(ssrc, userId);
                 if (videoSsrc) this.ssrcToUserId.set(videoSsrc, userId);
                 if (screenSsrc) this.ssrcToUserId.set(screenSsrc, userId);
+                const existing = this.participants.get(userId);
+                if (existing) this.participants.set(userId, { ...existing, speaking: !!data.speaking });
             }
-
-            this.emit("speaking", {
-                ssrc,
-                userId,
-                speaking: !!data.speaking,
-            });
+            this.emit("speaking", { ssrc, userId, speaking: !!data.speaking });
         } catch {}
     }
 
     private handleMediaState(msg: Buffer): void {
         try {
-            const json = msg.slice(1).toString("utf8");
-            const data = JSON.parse(json);
-
+            const data = JSON.parse(msg.slice(1).toString("utf8"));
             const userId = data.userId || data.user_id;
             if (!userId) return;
-
             const ssrc = (data.ssrc ?? 0) >>> 0;
             const videoSsrc = (data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0;
             const screenSsrc = (data.screenSsrc ?? data.screen_ssrc ?? 0) >>> 0;
-
-            console.log('[VoiceService] MediaState received:', {
-                userId,
-                ssrc,
-                videoSsrc,
-                screenSsrc,
-                screenSharing: data.screenSharing ?? data.screen_sharing
-            });
-
             if (ssrc) this.ssrcToUserId.set(ssrc, userId);
             if (videoSsrc) this.ssrcToUserId.set(videoSsrc, userId);
             if (screenSsrc) this.ssrcToUserId.set(screenSsrc, userId);
 
             const existing = this.participants.get(userId);
-
             const next: ParticipantInfo = {
                 userId,
                 ssrc: ssrc || existing?.ssrc || 0,
@@ -654,53 +531,40 @@ export class VoiceService extends EventEmitter {
                 speaking: existing?.speaking ?? false,
                 displayName: existing?.displayName,
                 avatarUrl: existing?.avatarUrl,
+                quality: existing?.quality,
+                rttMs: existing?.rttMs,
+                packetLoss: existing?.packetLoss,
+                jitterMs: existing?.jitterMs,
             };
-
             this.participants.set(userId, next);
-
-            this.emit("media-state", {
-                ssrc: next.ssrc,
-                videoSsrc: next.videoSsrc,
-                screenSsrc: next.screenSsrc,
-                userId,
-                muted: next.muted,
-                videoEnabled: next.videoEnabled,
-                screenSharing: next.screenSharing,
-            });
-
-            if (!existing) {
-                this.emit("participant-joined", next);
-            } else {
-                this.emit("participant-updated", next);
-            }
+            this.emit("media-state", { ssrc: next.ssrc, videoSsrc: next.videoSsrc, screenSsrc: next.screenSsrc, userId, muted: next.muted, videoEnabled: next.videoEnabled, screenSharing: next.screenSharing });
+            this.emit(existing ? "participant-updated" : "participant-joined", next);
         } catch (e) {
-            console.error('[VoiceService] Failed to parse MediaState:', e);
+            console.error("[VoiceService] Failed to parse MediaState:", e);
         }
     }
 
     private handleParticipantLeft(msg: Buffer): void {
         try {
-            const json = msg.slice(1).toString("utf8");
-            const data: ParticipantLeftPayload = JSON.parse(json);
-
-            let userId = data.userId || data.user_id || "";
-            const ssrc = ((data.ssrc ?? data.audio_ssrc ?? 0) >>> 0) || 0;
-            const videoSsrc = ((data.videoSsrc ?? data.video_ssrc ?? 0) >>> 0) || 0;
+            const data = JSON.parse(msg.slice(1).toString("utf8"));
+            let userId = data.user_id || data.userId || "";
+            const ssrc = (data.ssrc ?? data.audio_ssrc ?? 0) >>> 0;
+            const videoSsrc = (data.video_ssrc ?? data.videoSsrc ?? 0) >>> 0;
+            const screenSsrc = (data.screen_ssrc ?? data.screenSsrc ?? 0) >>> 0;
 
             if (!userId) {
                 if (ssrc) userId = this.ssrcToUserId.get(ssrc) || "";
                 if (!userId && videoSsrc) userId = this.ssrcToUserId.get(videoSsrc) || "";
+                if (!userId && screenSsrc) userId = this.ssrcToUserId.get(screenSsrc) || "";
             }
-
             if (ssrc) this.ssrcToUserId.delete(ssrc);
             if (videoSsrc) this.ssrcToUserId.delete(videoSsrc);
-
+            if (screenSsrc) this.ssrcToUserId.delete(screenSsrc);
             if (userId) this.participants.delete(userId);
-
             if (ssrc) this.clearPerStreamState(ssrc);
             if (videoSsrc && videoSsrc !== ssrc) this.clearPerStreamState(videoSsrc);
-
-            this.emit("participant-left", { userId, ssrc, videoSsrc });
+            if (screenSsrc && screenSsrc !== ssrc && screenSsrc !== videoSsrc) this.clearPerStreamState(screenSsrc);
+            this.emit("participant-left", { userId, ssrc, videoSsrc, screenSsrc });
         } catch {}
     }
 
@@ -708,26 +572,19 @@ export class VoiceService extends EventEmitter {
         for (const k of Array.from(this.replayFilters.keys())) {
             if (k.endsWith(`:${ssrc >>> 0}`)) this.replayFilters.delete(k);
         }
-
         this.reassemblers.delete(ssrc);
         this.stats.clearSsrc(ssrc);
-
         this.retransmitCache.clearSsrc(ssrc);
         this.nackTracker.clearSsrc(ssrc);
         this.pliTracker.clearSsrc(ssrc);
-
-        this.seenFirstVideoFrom.delete(ssrc);
     }
 
     private handleNack(msg: Buffer): void {
         if (msg.length < 7) return;
-
         const view = new DataView(msg.buffer, msg.byteOffset);
         const targetSsrc = view.getUint32(1, false);
         const count = view.getUint16(5, false);
-
         if (targetSsrc !== this.audioSsrc && targetSsrc !== this.videoSsrc && targetSsrc !== this.screenSsrc) return;
-
         for (let i = 0; i < count && 7 + i * 2 + 2 <= msg.length; i++) {
             const seq = view.getUint16(7 + i * 2, false);
             const cached = this.retransmitCache.get(targetSsrc, seq);
@@ -737,22 +594,32 @@ export class VoiceService extends EventEmitter {
 
     private handlePli(msg: Buffer): void {
         if (msg.length < 5) return;
-
         const view = new DataView(msg.buffer, msg.byteOffset);
         const targetSsrc = view.getUint32(1, false);
-
         if (targetSsrc === this.videoSsrc || targetSsrc === this.screenSsrc) {
-            this.emit("pli-requested");
+            this.emit("pli-requested", targetSsrc);
         }
     }
 
-    sendAudio(audioData: Buffer): void {
-        if (!this.connected || !this.audioSsrc) return;
+    private handleReceiverReport(msg: Buffer): void {
+        if (msg.length < 25) return;
+        const view = new DataView(msg.buffer, msg.byteOffset);
+        const report = {
+            ssrc: view.getUint32(1, false),
+            reporterSsrc: view.getUint32(5, false),
+            fractionLost: msg[9] / 255,
+            totalLost: ((msg[10] << 16) | (msg[11] << 8) | msg[12]) >>> 0,
+            highestSeq: view.getUint32(13, false),
+            jitter: view.getUint32(17, false),
+        };
+        this.emit("receiver-report", report);
+    }
 
+    sendAudio(audioData: Buffer): void {
+        if (!this.connected || !this.audioSsrc || this.localMuted) return;
         const counter = this.audioCounter++;
         const sequence = this.audioSequence++ & 0xffff;
         const timestamp = (((Date.now() - this.baseTimeMs) * 48) >>> 0);
-
         const header: MediaHeader = {
             type: PacketType.AUDIO,
             flags: 0,
@@ -763,46 +630,37 @@ export class VoiceService extends EventEmitter {
             ssrc: this.audioSsrc,
             counter,
         };
-
         const headerBytes = Buffer.from(encodeMediaHeader(header));
         const payload = this.keyRing.seal(headerBytes, audioData, header.keyId, header.ssrc, counter);
-
         const packet = Buffer.concat([headerBytes, payload]);
         this.retransmitCache.store(header.ssrc, sequence, packet);
         this.stats.recordPacketSent(packet.length);
-
         this.send(packet);
     }
 
     sendVideo(videoData: Buffer, isKeyframe: boolean, source: 'camera' | 'screen' = 'camera'): void {
         if (!this.connected) return;
-
         let targetSsrc: number | undefined;
         let sequence: number;
         let counter: bigint;
-
         if (source === 'screen') {
-            if (!this.screenSsrc) return;
+            if (!this.screenSsrc || !this.localScreenSharing) return;
             targetSsrc = this.screenSsrc;
             sequence = this.screenSequence;
             counter = this.screenCounter;
         } else {
-            if (!this.videoSsrc) return;
+            if (!this.videoSsrc || !this.localVideoEnabled) return;
             targetSsrc = this.videoSsrc;
             sequence = this.videoSequence;
             counter = this.videoCounter;
         }
-
         const timestamp = (((Date.now() - this.baseTimeMs) * 90) >>> 0);
-
         const fragments = this.fragmenter.fragment(videoData, isKeyframe);
-
         for (let i = 0; i < fragments.length; i++) {
             const fragPayload = fragments[i];
             const fragSequence = (sequence + i) & 0xffff;
             this.sendVideoPacket(fragPayload, timestamp, isKeyframe && i === 0, targetSsrc!, counter + BigInt(i), fragSequence);
         }
-
         if (source === 'screen') {
             this.screenSequence = (sequence + fragments.length) & 0xffff;
             this.screenCounter = counter + BigInt(fragments.length);
@@ -823,36 +681,29 @@ export class VoiceService extends EventEmitter {
             ssrc,
             counter,
         };
-
         const headerBytes = Buffer.from(encodeMediaHeader(header));
         const enc = this.keyRing.seal(headerBytes, payload, header.keyId, header.ssrc, counter);
-
         const packet = Buffer.concat([headerBytes, enc]);
         this.retransmitCache.store(header.ssrc, sequence, packet);
         this.stats.recordPacketSent(packet.length);
-
         if (packet.length > 1200) {
             console.warn(`[VoiceService] Packet exceeds MTU: ${packet.length}`);
             return;
         }
-
         this.send(packet);
     }
 
     setSpeaking(speaking: boolean): void {
         if (!this.connected || !this.audioSsrc) return;
-
-        const payload = {
+        this.emit("local-speaking", speaking);
+        this.send(Buffer.from(buildSpeakingPacket({
             ssrc: this.audioSsrc,
             video_ssrc: this.videoSsrc,
             screen_ssrc: this.screenSsrc,
             user_id: this.config.userId,
             room_id: this.config.roomId,
             speaking,
-        };
-
-        const packet = buildSpeakingPacket(payload);
-        this.send(Buffer.from(packet));
+        })));
     }
 
     setMediaState(muted: boolean, videoEnabled: boolean, screenSharing: boolean): void {
@@ -860,8 +711,7 @@ export class VoiceService extends EventEmitter {
         this.localMuted = muted;
         this.localVideoEnabled = videoEnabled;
         this.localScreenSharing = screenSharing;
-
-        const payload = {
+        this.send(Buffer.from(buildMediaStatePacket({
             ssrc: this.audioSsrc,
             video_ssrc: this.videoSsrc,
             screen_ssrc: this.screenSsrc,
@@ -870,113 +720,105 @@ export class VoiceService extends EventEmitter {
             muted,
             video_enabled: videoEnabled,
             screen_sharing: screenSharing,
-        };
-        const packet = buildMediaStatePacket(payload);
-        this.send(Buffer.from(packet));
+        })));
     }
-
 
     requestKeyframe(targetSsrc: number): void {
         if (!this.connected) return;
-
         if (this.pliTracker.shouldSendPli(targetSsrc)) {
-            const packet = buildPliPacket(targetSsrc);
-            this.send(Buffer.from(packet));
+            this.send(Buffer.from(buildPliPacket(targetSsrc)));
         }
     }
 
     setSubscriptions(ssrcs: number[]): void {
+        this.currentSubscriptions = [...ssrcs];
         if (!this.connected) return;
-
-        // PacketType 0x0e = SUBSCRIBE
-        const packetType = 0x0e;
-        const payload = JSON.stringify({ subscriptions: ssrcs });
-        const jsonBytes = new TextEncoder().encode(payload);
-        const packet = new Uint8Array(1 + jsonBytes.length);
-        packet[0] = packetType;
-        packet.set(jsonBytes, 1);
-
-        this.send(Buffer.from(packet));
+        this.pushSubscriptions();
     }
 
-    private startPingInterval(): void {
+    private pushSubscriptions(): void {
+        if (!this.connected) return;
+        this.send(Buffer.from(buildSubscribePacket(this.currentSubscriptions)));
+    }
+
+    private missedPongs = 0;
+    private static readonly MAX_MISSED_PONGS = 5;
+
+    private startPingInterval(intervalMs: number): void {
+        this.missedPongs = 0;
+
         this.pingInterval = setInterval(() => {
             if (!this.connected) return;
-            const packet = buildPingPacket();
-            this.send(Buffer.from(packet));
-        }, 5000);
+
+            this.missedPongs++;
+
+            if (this.missedPongs >= VoiceService.MAX_MISSED_PONGS) {
+                this.missedPongs = 0;
+                this.emit("error", new Error("Voice heartbeat timed out"));
+                return;
+            }
+
+            const buf = Buffer.alloc(9);
+            buf[0] = 0x05;
+            buf.writeBigUInt64BE(BigInt(Date.now()), 1);
+            this.send(buf);
+        }, intervalMs);
     }
 
-    private startRRInterval(): void {
+    private handlePong(msg: Buffer): void {
+        this.missedPongs = 0;
+        this.lastPongAt = Date.now();
+
+        if (msg.length >= 9) {
+            try {
+                const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
+                const sentTime = Number(view.getBigUint64(1, false));
+                if (sentTime > 0 && sentTime < Date.now() + 60000) {
+                    const rtt = Date.now() - sentTime;
+                    this.stats.recordRtt(rtt);
+                    this.emit("rtt", rtt);
+                    return;
+                }
+            } catch {}
+        }
+
+        this.stats.recordRtt(0);
+    }
+
+    private startRRInterval(intervalMs: number): void {
         this.rrInterval = setInterval(() => {
             if (!this.connected || !this.audioSsrc) return;
-
             for (const [ssrc] of this.ssrcToUserId) {
                 if (ssrc === this.audioSsrc || ssrc === this.videoSsrc || ssrc === this.screenSsrc) continue;
-
                 const streamStats = this.stats.getStreamStats(ssrc);
                 if (!streamStats) continue;
-
                 const fractionLost = this.stats.getFractionLost(ssrc);
-
-                const packet = buildReceiverReport(
+                this.send(Buffer.from(buildReceiverReport(
                     ssrc,
                     this.audioSsrc!,
                     fractionLost,
                     streamStats.packetsLost,
                     streamStats.highestSeq,
                     Math.floor(streamStats.jitterMs)
-                );
-
-                this.send(Buffer.from(packet));
+                )));
             }
-        }, 250);
+        }, intervalMs);
     }
 
     private send(data: Buffer): void {
         if (!this.socket) return;
-
-        this.socket.send(
-            data,
-            0,
-            data.length,
-            this.config.endpoint.port,
-            this.config.endpoint.host,
-            (err) => {
-                if (err) this.emit("error", err);
-            }
-        );
+        this.socket.send(data, 0, data.length, this.config.endpoint.port, this.config.endpoint.host, (err) => {
+            if (err) this.emit("error", err);
+        });
     }
 
-    isConnected(): boolean {
-        return this.connected;
-    }
-
-    getSSRC(): number | undefined {
-        return this.audioSsrc;
-    }
-
-    getVideoSSRC(): number | undefined {
-        return this.videoSsrc;
-    }
-
-    getScreenSSRC(): number | undefined {
-        return this.screenSsrc;
-    }
-
-    getSessionId(): number | undefined {
-        return this.sessionId;
-    }
-
-    getParticipants(): ParticipantInfo[] {
-        return Array.from(this.participants.values());
-    }
-
-    getSsrcToUserIdMap(): Map<number, string> {
-        return new Map(this.ssrcToUserId);
-    }
-
-    getStats() {
-        return this.stats.getStats();
-    }
+    isConnected(): boolean { return this.connected; }
+    getSSRC(): number | undefined { return this.audioSsrc; }
+    getVideoSSRC(): number | undefined { return this.videoSsrc; }
+    getScreenSSRC(): number | undefined { return this.screenSsrc; }
+    getSessionId(): number | undefined { return this.sessionId; }
+    getParticipants(): ParticipantInfo[] { return Array.from(this.participants.values()); }
+    getSsrcToUserIdMap(): Map<number, string> { return new Map(this.ssrcToUserId); }
+    getStats() { return this.stats.getStats(); }
+    getLocalQuality(): number { return this.localQuality; }
 }

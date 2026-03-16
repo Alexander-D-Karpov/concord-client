@@ -124,12 +124,12 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({ file, onCrop, onCance
     return (
         <Modal onClose={onCancel} className="max-w-md">
             <div className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4">Crop Avatar</h3>
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Crop Avatar</h3>
 
                 <div className="flex justify-center mb-4">
                     <div
                         ref={containerRef}
-                        className="relative overflow-hidden rounded-full bg-dark-700 cursor-grab active:cursor-grabbing"
+                        className="relative overflow-hidden rounded-fullbg-gray-100 dark:bg-dark-700 cursor-grab active:cursor-grabbing"
                         style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
                         onMouseDown={handleMouseDown}
                         onWheel={handleWheel}
@@ -156,21 +156,21 @@ const AvatarCropModal: React.FC<AvatarCropModalProps> = ({ file, onCrop, onCance
                     </div>
                 </div>
 
-                <p className="text-center text-sm text-dark-400 mb-4">
+                <p className="text-center text-sm text-gray-500 dark:text-dark-400 mb-4">
                     Drag to reposition, scroll to zoom
                 </p>
 
                 <div className="flex space-x-2">
                     <button
                         onClick={onCancel}
-                        className="flex-1 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition"
+                        className="flex-1 px-4 py-2bg-gray-100 dark:bg-dark-700 hover:bg-gray-200 dark:hover:bg-dark-600 text-gray-900 dark:text-white rounded-lg transition"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={handleCrop}
                         disabled={!ready}
-                        className="flex-1 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-lg transition"
+                        className="flex-1 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-gray-900 dark:text-white rounded-lg transition"
                     >
                         Upload
                     </button>

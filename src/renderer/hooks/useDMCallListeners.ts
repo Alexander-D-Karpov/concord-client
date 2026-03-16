@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useDMCallStore } from './useDMCallStore';
-import { useAuthStore } from './useAuthStore';
+import useAuthStore from './useAuthStore';
 
 export function useDMCallListeners() {
     const userId = useAuthStore(s => s.user?.id);

@@ -21,27 +21,13 @@ const DMList: React.FC<DMListProps> = ({ onSelectDM }) => {
         onSelectDM?.(channelId);
     };
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'online': return 'bg-green-500';
-            case 'idle': return 'bg-yellow-500';
-            case 'dnd': return 'bg-red-500';
-            default: return 'bg-dark-500';
-        }
-    };
-
     const getDisplayName = (ch: typeof channels[0]) => {
         return ch.otherUserDisplay || ch.otherUserHandle || 'Unknown User';
     };
 
-    const getInitial = (ch: typeof channels[0]) => {
-        const name = getDisplayName(ch);
-        return name.charAt(0).toUpperCase();
-    };
-
     if (loading && channels.length === 0) {
         return (
-            <div className="p-4 text-center text-dark-400">
+            <div className="p-4 text-center text-gray-400 dark:text-dark-400">
                 <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
             </div>
         );
@@ -49,7 +35,7 @@ const DMList: React.FC<DMListProps> = ({ onSelectDM }) => {
 
     if (channels.length === 0) {
         return (
-            <div className="p-4 text-center text-dark-400 text-sm">
+            <div className="p-4 text-center text-gray-400 dark:text-dark-400 text-sm">
                 No conversations yet
             </div>
         );
@@ -67,7 +53,7 @@ const DMList: React.FC<DMListProps> = ({ onSelectDM }) => {
                     className={`w-full px-3 py-2 rounded-lg text-left transition flex items-center space-x-3 ${
                         currentChannelId === ch.channel.id
                             ? 'bg-primary-600 text-white'
-                            : 'text-dark-300 hover:bg-dark-700 hover:text-white'
+                            : 'text-gray-700 dark:text-dark-300 hover:bg-gray-100 dark:hover:bg-dark-700 hover:text-gray-900 dark:hover:text-white'
                     }`}
                 >
                     <Avatar

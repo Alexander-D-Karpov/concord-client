@@ -19,9 +19,7 @@ const Modal: React.FC<ModalProps> = ({ children, onClose, className = '' }) => {
     }, [onClose]);
 
     const handleClick = (e: React.MouseEvent) => {
-        if (e.target === overlayRef.current) {
-            onClose();
-        }
+        if (e.target === overlayRef.current) onClose();
     };
 
     return createPortal(
@@ -30,7 +28,7 @@ const Modal: React.FC<ModalProps> = ({ children, onClose, className = '' }) => {
             className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 animate-fade-in"
             onClick={handleClick}
         >
-            <div className={`bg-dark-800 rounded-lg shadow-2xl border border-dark-700 w-full max-w-lg overflow-hidden animate-scale-in ${className}`}>
+            <div className={`bg-white dark:bg-dark-800 rounded-lg shadow-2xl border border-gray-200 dark:border-dark-700 w-full max-w-lg overflow-hidden animate-scale-in ${className}`}>
                 {children}
             </div>
         </div>,

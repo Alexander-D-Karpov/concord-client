@@ -2,14 +2,10 @@ import { ConnectionQuality } from '../../shared/voice/constants';
 
 export interface StreamStats {
     ssrc: number;
-
     packetsReceived: number;
     packetsLost: number;
-
     bytesReceived: number;
-
     highestSeq: number;
-
     jitterMs: number;
     lastPacketTime: number;
 }
@@ -18,7 +14,7 @@ type MissingEntry = { seq: number; addedAt: number };
 
 class SeqGapTracker {
     private maxSeq: number | null = null;
-    private missing = new Map<number, number>(); // seq -> addedAt
+    private missing = new Map<number, number>();
     private windowLimit: number;
     private graceMs: number;
 
@@ -29,21 +25,18 @@ class SeqGapTracker {
 
     note(seq: number): void {
         seq &= 0xffff;
-
         if (this.maxSeq === null) {
             this.maxSeq = seq;
             return;
         }
 
         const max = this.maxSeq;
-
         const forward = ((seq - max) & 0xffff) < 0x8000;
         if (forward && seq !== max) {
             let cur = (max + 1) & 0xffff;
             while (cur !== seq) {
                 this.missing.set(cur, Date.now());
                 cur = (cur + 1) & 0xffff;
-
                 if (this.missing.size > this.windowLimit) {
                     const oldest = this.missing.keys().next().value as number | undefined;
                     if (oldest !== undefined) this.missing.delete(oldest);
@@ -59,19 +52,13 @@ class SeqGapTracker {
     getMissing(now = Date.now(), limit = 20): number[] {
         const out: number[] = [];
         const entries: MissingEntry[] = [];
-
-        for (const [seq, addedAt] of this.missing) {
-            entries.push({ seq, addedAt });
-        }
-
+        for (const [seq, addedAt] of this.missing) entries.push({ seq, addedAt });
         entries.sort((a, b) => a.addedAt - b.addedAt);
-
         for (const e of entries) {
             if (out.length >= limit) break;
             if (now - e.addedAt < this.graceMs) continue;
             out.push(e.seq);
         }
-
         return out;
     }
 
@@ -87,21 +74,17 @@ export interface AggregateStats {
     totalBytesReceived: number;
     totalBytesSent: number;
     rttMs: number;
-
     streams: Map<number, StreamStats>;
 }
 
 export class StatsCollector {
     private streams = new Map<number, StreamStats>();
-
     private totalReceived = 0;
     private totalSent = 0;
     private bytesReceived = 0;
     private bytesSent = 0;
     private lastRtt = 0;
-
     private gapTrackers = new Map<number, SeqGapTracker>();
-
     private lastArrivalMs = new Map<number, number>();
     private lastTransitMs = new Map<number, number>();
 
@@ -132,9 +115,7 @@ export class StatsCollector {
         if (gt) {
             const beforeMissing = gt.getMissing(Date.now(), 4096).length;
             gt.note(seq);
-
             const afterMissing = gt.getMissing(Date.now(), 4096).length;
-            // packetsLost is "observed gaps not yet filled"; keep it bounded and monotonic-ish for UI
             stats.packetsLost = Math.max(stats.packetsLost + (afterMissing - beforeMissing), 0);
         }
 
@@ -145,15 +126,11 @@ export class StatsCollector {
         const arrivalMs = Date.now();
         const tsMs = timestampHz > 0 ? (timestamp / timestampHz) * 1000 : 0;
         const transitMs = arrivalMs - tsMs;
-
-        const lastArrival = this.lastArrivalMs.get(ssrc);
         const lastTransit = this.lastTransitMs.get(ssrc);
-
-        if (lastArrival !== undefined && lastTransit !== undefined) {
+        if (lastTransit !== undefined) {
             const d = Math.abs(transitMs - lastTransit);
             stats.jitterMs = stats.jitterMs + (d - stats.jitterMs) / 16;
         }
-
         this.lastArrivalMs.set(ssrc, arrivalMs);
         this.lastTransitMs.set(ssrc, transitMs);
     }
@@ -163,14 +140,11 @@ export class StatsCollector {
         this.bytesSent += size;
     }
 
-    recordRtt(rttMs: number): void {
-        this.lastRtt = rttMs;
-    }
+    recordRtt(rttMs: number): void { this.lastRtt = rttMs; }
 
     getMissingSequences(ssrc: number, limit = 20): number[] {
         const gt = this.gapTrackers.get(ssrc);
-        if (!gt) return [];
-        return gt.getMissing(Date.now(), limit);
+        return gt ? gt.getMissing(Date.now(), limit) : [];
     }
 
     clearSsrc(ssrc: number): void {
@@ -178,7 +152,6 @@ export class StatsCollector {
         this.gapTrackers.delete(ssrc);
         this.lastArrivalMs.delete(ssrc);
         this.lastTransitMs.delete(ssrc);
-        this.streams.delete(ssrc);
     }
 
     getStats(): AggregateStats {
@@ -192,44 +165,17 @@ export class StatsCollector {
         };
     }
 
-    getStreamStats(ssrc: number): StreamStats | undefined {
-        return this.streams.get(ssrc);
-    }
+    getStreamStats(ssrc: number): StreamStats | undefined { return this.streams.get(ssrc); }
 
     getFractionLost(ssrc: number): number {
         const s = this.streams.get(ssrc);
         if (!s) return 0;
         const missing = this.getMissingSequences(ssrc, 4096).length;
         const total = s.packetsReceived + missing;
-        if (total <= 0) return 0;
-        return missing / total;
+        return total > 0 ? missing / total : 0;
     }
 
-    calculateStreamQuality(ssrc: number): number {
-        const stats = this.streams.get(ssrc);
-        if (!stats) return ConnectionQuality.UNKNOWN;
-
-        const loss = this.getFractionLost(ssrc);
-        const jitter = stats.jitterMs;
-        const timeSinceLast = Date.now() - stats.lastPacketTime;
-
-        if (timeSinceLast > 5000) return ConnectionQuality.UNKNOWN;
-
-        if (loss < 0.02 && jitter < 30) return ConnectionQuality.GOOD;
-        if (loss < 0.05 && jitter < 50) return ConnectionQuality.MEDIUM;
-        return ConnectionQuality.POOR;
-    }
-
-    calculateLocalQuality(rttMs: number): number {
-        const avgLoss = this.getAverageLoss();
-        const avgJitter = this.getAverageJitter();
-
-        if (rttMs < 100 && avgLoss < 0.02 && avgJitter < 30) return ConnectionQuality.GOOD;
-        if (rttMs < 250 && avgLoss < 0.05 && avgJitter < 50) return ConnectionQuality.MEDIUM;
-        return ConnectionQuality.POOR;
-    }
-
-    private getAverageLoss(): number {
+    getAverageLoss(): number {
         let total = 0;
         let count = 0;
         for (const [ssrc] of this.streams) {
@@ -239,7 +185,7 @@ export class StatsCollector {
         return count > 0 ? total / count : 0;
     }
 
-    private getAverageJitter(): number {
+    getAverageJitter(): number {
         let total = 0;
         let count = 0;
         for (const stats of this.streams.values()) {
@@ -249,12 +195,31 @@ export class StatsCollector {
         return count > 0 ? total / count : 0;
     }
 
+    calculateStreamQuality(ssrc: number): number {
+        const stats = this.streams.get(ssrc);
+        if (!stats) return ConnectionQuality.UNKNOWN;
+        const loss = this.getFractionLost(ssrc);
+        const jitter = stats.jitterMs;
+        const timeSinceLast = Date.now() - stats.lastPacketTime;
+        if (timeSinceLast > 5000) return ConnectionQuality.UNKNOWN;
+        if (loss < 0.02 && jitter < 30) return ConnectionQuality.GOOD;
+        if (loss < 0.05 && jitter < 50) return ConnectionQuality.MEDIUM;
+        return ConnectionQuality.POOR;
+    }
+
+    calculateLocalQuality(rttMs: number): number {
+        const avgLoss = this.getAverageLoss();
+        const avgJitter = this.getAverageJitter();
+        if (rttMs < 100 && avgLoss < 0.02 && avgJitter < 30) return ConnectionQuality.GOOD;
+        if (rttMs < 250 && avgLoss < 0.05 && avgJitter < 50) return ConnectionQuality.MEDIUM;
+        return ConnectionQuality.POOR;
+    }
+
     reset(): void {
         this.streams.clear();
         this.gapTrackers.clear();
         this.lastArrivalMs.clear();
         this.lastTransitMs.clear();
-
         this.totalReceived = 0;
         this.totalSent = 0;
         this.bytesReceived = 0;

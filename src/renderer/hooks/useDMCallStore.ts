@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import {useVoiceStore} from "@/hooks/useVoiceStore";
 
 const RING_TIMEOUT_MS = 45_000;
 
@@ -46,7 +47,15 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
     setIncomingCall: (call) => set({ incomingCall: call }),
 
     startCall: async (channelId, audioOnly = false) => {
+        const voiceStore = useVoiceStore.getState();
+        if (voiceStore.connected && voiceStore.roomId && voiceStore.roomId !== channelId) {
+            try { await window.concord.leaveVoice(voiceStore.roomId); } catch {}
+            voiceStore.reset();
+        }
+
         set({ connecting: true, error: null, outgoingCall: true, channelId, active: false, voiceReady: false });
+        voiceStore.setRoom(channelId, true);
+        voiceStore.setConnecting(true);
 
         clearRingTimeout();
         ringTimeout = setTimeout(() => {
@@ -71,6 +80,9 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
                 outgoingCall: false,
             });
 
+            voiceStore.setConnected(true);
+            voiceStore.setConnecting(false);
+
             clearRingTimeout();
         } catch (err: any) {
             const msg = err?.message || '';
@@ -87,12 +99,22 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
                 channelId: null,
                 error: msg || 'Failed to start call',
             });
+            voiceStore.reset();
             throw err;
         }
     },
 
     joinCall: async (channelId, audioOnly = false) => {
+        const voiceStore = useVoiceStore.getState();
+        if (voiceStore.connected && voiceStore.roomId && voiceStore.roomId !== channelId) {
+            try { await window.concord.leaveVoice(voiceStore.roomId); } catch {}
+            voiceStore.reset();
+        }
+
         set({ connecting: true, error: null, incomingCall: null, channelId, active: false, voiceReady: false });
+        voiceStore.setRoom(channelId, true);
+        voiceStore.setConnecting(true);
+
         try {
             const result = await window.concord.joinDMCall(channelId, audioOnly);
 
@@ -109,6 +131,8 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
                 incomingCall: null,
                 outgoingCall: false,
             });
+            voiceStore.setConnected(true);
+            voiceStore.setConnecting(false);
         } catch (err: any) {
             set({
                 connecting: false,
@@ -116,6 +140,7 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
                 channelId: null,
                 error: err?.message || 'Failed to join call',
             });
+            voiceStore.reset();
             throw err;
         }
     },
@@ -138,6 +163,7 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
 
         try { await window.concord.leaveDMCall(channelId); } catch {}
         try { await window.concord.leaveVoice(channelId); } catch {}
+        useVoiceStore.getState().reset();
     },
 
     declineCall: () => {
@@ -186,6 +212,7 @@ export const useDMCallStore = create<DMCallState>((set, get) => ({
             incomingCall: null,
             outgoingCall: false,
         });
+        useVoiceStore.getState().reset();
     },
 
     setVoiceConnected: (connected) => {

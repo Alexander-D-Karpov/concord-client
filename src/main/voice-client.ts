@@ -28,7 +28,6 @@ export class VoiceClient extends EventEmitter {
 
     constructor(config: VoiceConfig) {
         super();
-
         this.service = new VoiceService({
             ...config,
             crypto: {
@@ -37,7 +36,6 @@ export class VoiceClient extends EventEmitter {
                 keyMaterial: config.crypto.keyMaterial,
             },
         });
-
         this.setupEventForwarding();
     }
 
@@ -45,79 +43,40 @@ export class VoiceClient extends EventEmitter {
         this.service.on("connected", (data) => this.emit("welcome", data));
         this.service.on("disconnected", () => this.emit("disconnect"));
         this.service.on("error", (err) => this.emit("error", err));
-
         this.service.on("audio", (data) => this.emit("audio", data));
         this.service.on("video", (data) => this.emit("video", data));
-
         this.service.on("speaking", (data) => this.emit("speaking", data));
+        this.service.on("local-speaking", (data) => this.emit("local-speaking", data));
         this.service.on("media-state", (data) => this.emit("media-state", data));
-
         this.service.on("participant-joined", (data) => this.emit("participant-joined", data));
         this.service.on("participant-updated", (data) => this.emit("participant-updated", data));
         this.service.on("participant-left", (data) => this.emit("participant-left", data));
-
         this.service.on("rtt", (rtt) => this.emit("rtt", rtt));
-        this.service.on("pli-requested", () => this.emit("pli-requested"));
+        this.service.on("pli-requested", (ssrc) => this.emit("pli-requested", ssrc));
+        this.service.on("receiver-report", (data) => this.emit("receiver-report", data));
         this.service.on("decrypt-error", (data) => this.emit("decrypt-error", data));
         this.service.on("quality", (data) => this.emit("quality", data));
         this.service.on("peer-quality", (data) => this.emit("peer-quality", data));
     }
 
-    async connect(): Promise<void> {
-        return this.service.connect();
-    }
-
-    disconnect(): void {
-        this.service.disconnect();
-    }
-
-    sendAudio(audioData: Buffer): void {
-        this.service.sendAudio(audioData);
-    }
-
-    getLocalQuality(): number {
-        return this.service.getLocalQuality();
-    }
-
+    async connect(): Promise<void> { return this.service.connect(); }
+    disconnect(): void { this.service.disconnect(); }
+    sendAudio(audioData: Buffer): void { this.service.sendAudio(audioData); }
+    getLocalQuality(): number { return this.service.getLocalQuality(); }
     sendVideo(videoData: Buffer, isKeyframe: boolean, source: 'camera' | 'screen' = 'camera'): void {
         this.service.sendVideo(videoData, isKeyframe, source);
     }
-
-    setSubscriptions(ssrcs: number[]): void {
-        this.service.setSubscriptions(ssrcs);
-    }
-
-    setSpeaking(speaking: boolean): void {
-        this.service.setSpeaking(speaking);
-    }
-
+    setSubscriptions(ssrcs: number[]): void { this.service.setSubscriptions(ssrcs); }
+    setSpeaking(speaking: boolean): void { this.service.setSpeaking(speaking); }
     setMediaState(muted: boolean, videoEnabled: boolean, screenSharing: boolean): void {
-        this.service.setMediaState(muted, videoEnabled, screenSharing);}
-
-    requestKeyframe(ssrc: number): void {
-        this.service.requestKeyframe(ssrc);
+        this.service.setMediaState(muted, videoEnabled, screenSharing);
     }
-
-    isConnected(): boolean {
-        return this.service.isConnected();
-    }
-
-    getSSRC(): number | undefined {
-        return this.service.getSSRC();
-    }
-
-    getVideoSSRC(): number | undefined {
-        return this.service.getVideoSSRC();
-    }
-
-    getScreenSSRC(): number | undefined {
-        return this.service.getScreenSSRC();
-    }
-
-    getSessionId(): number | undefined {
-        return this.service.getSessionId();
-    }
-
+    requestKeyframe(ssrc: number): void { this.service.requestKeyframe(ssrc); }
+    isConnected(): boolean { return this.service.isConnected(); }
+    getSSRC(): number | undefined { return this.service.getSSRC(); }
+    getVideoSSRC(): number | undefined { return this.service.getVideoSSRC(); }
+    getScreenSSRC(): number | undefined { return this.service.getScreenSSRC(); }
+    getSessionId(): number | undefined { return this.service.getSessionId(); }
     getParticipants(): WelcomeParticipant[] {
         return this.service.getParticipants().map((p) => ({
             userId: p.userId,
@@ -129,12 +88,6 @@ export class VoiceClient extends EventEmitter {
             screenSharing: p.screenSharing,
         }));
     }
-
-    getSsrcToUserIdMap(): Map<number, string> {
-        return this.service.getSsrcToUserIdMap();
-    }
-
-    getStats() {
-        return this.service.getStats();
-    }
+    getSsrcToUserIdMap(): Map<number, string> { return this.service.getSsrcToUserIdMap(); }
+    getStats() { return this.service.getStats(); }
 }

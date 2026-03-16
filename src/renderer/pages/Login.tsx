@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../hooks/useAuthStore';
+import useAuthStore from '../hooks/useAuthStore';
 import { useSettingsStore } from '../hooks/useSettingsStore';
 
 const Login: React.FC = () => {
@@ -65,42 +65,44 @@ const Login: React.FC = () => {
         }
     };
 
+    const inputClass = "w-full px-4 py-2.5 bg-gray-100 dark:bg-dark-700 border border-gray-200 dark:border-dark-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition";
+
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-dark-900 via-dark-800 to-dark-900 p-4">
-            <div className="bg-dark-800 p-6 sm:p-8 rounded-lg shadow-2xl w-full max-w-md border border-dark-700">
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-gray-100 dark:from-dark-900 dark:via-dark-800 dark:to-dark-900 p-4">
+            <div className="bg-white dark:bg-dark-800 p-6 sm:p-8 rounded-lg shadow-2xl w-full max-w-md border border-gray-200 dark:border-dark-700">
                 <div className="text-center mb-8">
                     <div className="text-5xl mb-4">💬</div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
                         {isRegister ? 'Create Account' : 'Welcome Back'}
                     </h1>
-                    <p className="text-dark-400 text-sm sm:text-base">
+                    <p className="text-gray-500 dark:text-dark-400 text-sm sm:text-base">
                         {isRegister ? 'Join Concord today' : 'Sign in to continue'}
                     </p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-dark-300 mb-2">
+                        <label className="block text-sm font-medium text-gray-600 dark:text-dark-300 mb-2">
                             Server
                         </label>
                         <input
                             type="text"
                             value={settings.serverAddress}
                             onChange={(e) => updateSettings({ serverAddress: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition text-sm"
+                            className={`${inputClass} text-sm`}
                             placeholder="https://concord.akarpov.ru"
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-dark-300 mb-2">
+                        <label className="block text-sm font-medium text-gray-600 dark:text-dark-300 mb-2">
                             Handle
                         </label>
                         <input
                             type="text"
                             value={handle}
                             onChange={(e) => setHandle(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition"
+                            className={inputClass}
                             placeholder="your_handle"
                             required
                         />
@@ -108,35 +110,35 @@ const Login: React.FC = () => {
 
                     {isRegister && (
                         <div>
-                            <label className="block text-sm font-medium text-dark-300 mb-2">
+                            <label className="block text-sm font-medium text-gray-600 dark:text-dark-300 mb-2">
                                 Display Name
                             </label>
                             <input
                                 type="text"
                                 value={displayName}
                                 onChange={(e) => setDisplayName(e.target.value)}
-                                className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition"
+                                className={inputClass}
                                 placeholder="Your Name"
                             />
                         </div>
                     )}
 
                     <div>
-                        <label className="block text-sm font-medium text-dark-300 mb-2">
+                        <label className="block text-sm font-medium text-gray-600 dark:text-dark-300 mb-2">
                             Password
                         </label>
                         <input
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="w-full px-4 py-2.5 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 transition"
+                            className={inputClass}
                             placeholder="••••••••"
                             required
                         />
                     </div>
 
                     {error && (
-                        <div className="px-4 py-3 bg-red-500 bg-opacity-10 border border-red-500 text-red-500 rounded-lg text-sm">
+                        <div className="px-4 py-3 bg-red-500/10 border border-red-500 text-red-500 rounded-lg text-sm">
                             {error}
                         </div>
                     )}
@@ -144,7 +146,7 @@ const Login: React.FC = () => {
                     <button
                         type="submit"
                         disabled={loading}
-                        className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-dark-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+                        className="w-full px-4 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-dark-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
                     >
                         {loading ? 'Please wait...' : isRegister ? 'Create Account' : 'Sign In'}
                     </button>
@@ -156,7 +158,7 @@ const Login: React.FC = () => {
                             setIsRegister(!isRegister);
                             setError('');
                         }}
-                        className="block w-full text-center text-primary-400 hover:text-primary-300 text-sm transition"
+                        className="block w-full text-center text-primary-500 dark:text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 text-sm transition"
                     >
                         {isRegister
                             ? 'Already have an account? Sign in'

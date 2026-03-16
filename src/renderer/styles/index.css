@@ -2,6 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+    :root {
+        --color-bg-primary: #ffffff;
+        --color-bg-secondary: #f3f4f6;
+        --color-bg-tertiary: #e5e7eb;
+        --color-text-primary: #111827;
+        --color-text-secondary: #6b7280;
+        --color-text-muted: #9ca3af;
+    }
+
+    .dark {
+        --color-bg-primary: #0f172a;
+        --color-bg-secondary: #1e293b;
+        --color-bg-tertiary: #334155;
+        --color-text-primary: #f8fafc;
+        --color-text-secondary: #94a3b8;
+        --color-text-muted: #64748b;
+    }
+}
+
+@layer components {
+    .input-base {
+        @apply w-full px-4 py-2.5 bg-gray-100 dark:bg-dark-700
+        border border-gray-200 dark:border-dark-600 rounded-xl
+        text-gray-900 dark:text-white
+        placeholder-gray-400 dark:placeholder-dark-400
+        focus:outline-none focus:ring-2 focus:ring-primary-500/50
+        focus:border-primary-500 transition;
+    }
+
+    .btn-primary {
+        @apply px-4 py-2.5 bg-primary-600 hover:bg-primary-700
+        text-white font-medium rounded-xl transition
+        disabled:opacity-50 disabled:cursor-not-allowed
+        active:scale-[0.98];
+    }
+
+    .btn-danger {
+        @apply px-4 py-2.5 bg-red-600 hover:bg-red-700
+        text-white font-medium rounded-xl transition
+        disabled:opacity-50 disabled:cursor-not-allowed
+        active:scale-[0.98];
+    }
+
+    .btn-ghost {
+        @apply p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-dark-700
+        text-gray-500 dark:text-dark-400
+        hover:text-gray-900 dark:hover:text-white transition;
+    }
+
+    .btn-secondary {
+        @apply px-4 py-2.5 bg-gray-200 dark:bg-dark-700
+        hover:bg-gray-300 dark:hover:bg-dark-600
+        text-gray-900 dark:text-white font-medium rounded-xl transition;
+    }
+
+    .card {
+        @apply bg-gray-50 dark:bg-dark-800 rounded-xl
+        border border-gray-200 dark:border-dark-700;
+    }
+
+    .overlay-backdrop {
+        @apply fixed inset-0 bg-black/60 backdrop-blur-sm
+        flex items-center justify-center z-[9999];
+    }
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -10,74 +77,60 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
+    background: var(--color-bg-primary);
+    color: var(--color-text-primary);
 }
 
 #root {
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
 }
 
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #1e293b;
+    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #475569;
-    border-radius: 4px;
+    background: var(--color-bg-tertiary);
+    border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #64748b;
+    background: var(--color-text-muted);
 }
 
 @media (max-width: 640px) {
     ::-webkit-scrollbar {
-        width: 4px;
-        height: 4px;
+        width: 3px;
+        height: 3px;
     }
-}
 
-.compact-mode .message-item {
-    padding: 0.25rem 0;
-}
-
-.compact-mode .message-avatar {
-    width: 1.5rem;
-    height: 1.5rem;
-    font-size: 0.75rem;
+    button {
+        min-height: 36px;
+        min-width: 36px;
+    }
 }
 
 @layer utilities {
-    .text-balance {
-        text-wrap: balance;
-    }
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
 }
-
 
 @keyframes slide-in {
-    from {
-        transform: translateX(100%);
-        opacity: 0;
-    }
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
-}
-
-.animate-slide-in {
-    animation: slide-in 0.3s ease-out;
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
 }
 
 @keyframes fade-in {
@@ -90,19 +143,6 @@ body {
     to { transform: scale(1); opacity: 1; }
 }
 
-@keyframes slide-down {
-    from { transform: translate(-50%, -100%); opacity: 0; }
-    to { transform: translate(-50%, 0); opacity: 1; }
-}
-
-.animate-fade-in {
-    animation: fade-in 0.2s ease-out forwards;
-}
-
-.animate-scale-in {
-    animation: scale-in 0.2s ease-out forwards;
-}
-
-.animate-slide-down {
-    animation: slide-down 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+.animate-slide-in { animation: slide-in 0.3s ease-out; }
+.animate-fade-in { animation: fade-in 0.2s ease-out forwards; }
+.animate-scale-in { animation: scale-in 0.2s ease-out forwards; }
